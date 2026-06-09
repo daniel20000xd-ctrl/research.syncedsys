@@ -29,9 +29,10 @@ The two tag layers are kept strictly separate on every record:
 
 - **Python 3.11+**
 - The **foundation migration must already be run** on the research Supabase
-  project (`migrations/001_research_foundation.sql`, in this repo's `migrations/`
-  folder). It creates `research_domains`, `concepts`, and the `update_updated_at()`
-  function that every domain table's trigger depends on.
+  project (run the SQL files in this repo's `migrations/` folder in order — `001`
+  then `002`). They create `research_domains`, `concepts`, the `update_updated_at()`
+  function every domain table's trigger depends on, and the per-domain guidance
+  columns the API/MCP serve to Claude.
 - A research Supabase project (separate from the main Syncedsys product DB) and
   an Anthropic API key.
 

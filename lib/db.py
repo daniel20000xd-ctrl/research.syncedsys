@@ -69,12 +69,15 @@ def ensure_domain_table(domain_key: str, config: dict) -> None:
         # schema cache so the just-created table is immediately queryable.
         cur.execute("NOTIFY pgrst, 'reload schema'")
 
-    # Register / refresh the domain in the registry table.
+    # Register / refresh the domain in the registry table, including the
+    # classification guidance the API/MCP serve to Claude (from domains.yaml).
     get_client().table("research_domains").upsert(
         {
             "domain_key": domain_key,
             "display_name": config["display_name"],
             "table_name": table_name,
+            "enrichment_context": config.get("enrichment_context"),
+            "structural_tag_categories": config.get("structural_tag_categories") or [],
         },
         on_conflict="domain_key",
     ).execute()
