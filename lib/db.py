@@ -8,6 +8,7 @@ research project; the service key bypasses RLS.
 from __future__ import annotations
 
 import os
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -42,7 +43,10 @@ def _pg_cursor():
         raise RuntimeError(
             "RESEARCH_DATABASE_URL must be set for DDL operations (see .env.example)."
         )
-    conn = psycopg2.connect(dsn)
+    # Pass the password separately rather than embedding it in the URL, so
+    # special / non-ASCII characters in it can't break URI parsing.
+    pw = os.environ.get("RESEARCH_DB_PASSWORD")
+    conn = psycopg2.connect(dsn, password=pw) if pw else psycopg2.connect(dsn)
     try:
         with conn.cursor() as cur:
             yield cur
@@ -61,6 +65,9 @@ def ensure_domain_table(domain_key: str, config: dict) -> None:
     sql = schema.get_create_table_sql(domain_key, config)
     with _pg_cursor() as cur:
         cur.execute(sql)
+        # Tell PostgREST (the REST API the supabase client uses) to refresh its
+        # schema cache so the just-created table is immediately queryable.
+        cur.execute("NOTIFY pgrst, 'reload schema'")
 
     # Register / refresh the domain in the registry table.
     get_client().table("research_domains").upsert(
@@ -71,6 +78,28 @@ def ensure_domain_table(domain_key: str, config: dict) -> None:
         },
         on_conflict="domain_key",
     ).execute()
+
+    # Don't return until the new table is visible through PostgREST, so the
+    # caller's first DML call doesn't hit a stale-schema-cache error.
+    _wait_for_table(table_name)
+
+
+def _wait_for_table(table_name: str, attempts: int = 20, delay: float = 1.0) -> None:
+    """Poll until a freshly created table appears in PostgREST's schema cache."""
+    client = get_client()
+    for _ in range(attempts):
+        try:
+            client.table(table_name).select("id").limit(1).execute()
+            return
+        except Exception as e:  # noqa: BLE001
+            if "PGRST205" in str(e) or "schema cache" in str(e):
+                time.sleep(delay)
+                continue
+            raise
+    raise RuntimeError(
+        f"Table '{table_name}' was created but never appeared in the PostgREST "
+        f"schema cache (after {attempts}s)."
+    )
 
 
 def update_domain_stats(domain_key: str, field: str) -> None:

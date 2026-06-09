@@ -20,19 +20,27 @@ domains:
     source_config:
       base_url: "https://rattspraxis.etjanst.domstol.se"
       court_codes:
-        - "HD"
-      search_queries:
-        - "testamente"
-        - "laglott"
-        - "klandertalan"
-        - "bröstarvinge"
-        - "ärvdabalken"
-        - "testamentstagare"
-        - "boutredning"
-        - "dödsbo"
-        - "förstärkt laglottsskydd"
-        - "återkallelse testamente"
-        - "inofficiöst testamente"
+        - "HDO"            # Högsta domstolen (NOT "HD")
+      search_queries:      # matched against the API's nyckelordLista tags (OR logic)
+        - "Arv"
+        - "Arvsrätt"
+        - "Testamente"
+        - "Dödsbo"
+        - "Laglott"
+        - "Arvskifte"
+        - "Arvinge"
+        - "Arvlåtare"
+        - "Bouppteckning"
+        - "Boutredning"
+        - "Boutredningsman"
+        - "Efterarvinge"
+        - "Särkullbarn"
+        - "Testamentsvittne"
+        - "Testamentsexekutor"
+        - "Förskott på arv"
+        - "Dödsbodelägare"
+        - "Arvsskatt"
+        - "Arvsfonden"
       page_size: 50
       request_delay_seconds: 0.5
     extra_columns:
