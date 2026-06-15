@@ -55,9 +55,24 @@ def get_client():
 
 
 def upload_bytes(key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
-    """Upload bytes to R2 under `key`; return the key (stored as raw_pdf_path)."""
+    """Upload bytes to R2 under `key`; return the key (stored as a *_path column)."""
     get_client().put_object(Bucket=R2_BUCKET, Key=key, Body=data, ContentType=content_type)
     return key
+
+
+def upload_text(key: str, text: str) -> str:
+    """Upload UTF-8 text to R2 under `key`; return the key (stored as full_text_path)."""
+    return upload_bytes(key, text.encode("utf-8"), "text/plain; charset=utf-8")
+
+
+def download_bytes(key: str) -> bytes:
+    """Fetch an object's bytes from R2."""
+    return get_client().get_object(Bucket=R2_BUCKET, Key=key)["Body"].read()
+
+
+def download_text(key: str) -> str:
+    """Fetch an object from R2 and decode it as UTF-8 text."""
+    return download_bytes(key).decode("utf-8", errors="replace")
 
 
 def object_exists(key: str) -> bool:

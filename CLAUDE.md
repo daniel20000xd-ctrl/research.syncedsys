@@ -64,10 +64,15 @@ domains; no court/keyword/area filter at ingest).
   `download_bilaga()` (PDF), `normalize()` (source → precedents row; shared with a future
   RSS delta mode). UNFILTERED = empty `{"filter":{}}` on `POST /api/v1/sok`; `sidIndex`
   (0-based page) + `antalPerSida`; sorted `publiceringstid` ASC so the page cursor is stable.
-- `lib/precedents.py` — orchestration: `backfill` (probe → page loop → PDF→R2→text →
-  upsert on `canonical_id` → cursor in `ingestion_progress`), `embed` (local model, rows
-  where `embedding is null`), `populate_queue` (rank ALL precedents by max cosine similarity
-  to seeds → `classification_queue.priority`).
+- `lib/precedents.py` — orchestration: `backfill` (probe → page loop → **heavy content
+  to R2** (PDF originals + extracted text) → LEAN upsert on `canonical_id`, no body column →
+  cursor in `ingestion_progress`), `embed` (local model, rows where `embedding is null`,
+  **reading the body back from R2** by `full_text_path`), `populate_queue` (rank ALL
+  precedents by max cosine similarity to seeds → `classification_queue.priority`).
+- **Storage**: heavy content lives in R2, not Postgres — `raw_pdf_path` (original PDF) and
+  `full_text_path` (extracted text) are R2 keys; the DB row keeps only structured fields, a
+  short `summary`, the pointers and the `embedding`. Keeps the table ~embeddings+HNSW+short
+  fields (fits free-tier disk). R2 is REQUIRED.
 - `lib/embeddings.py` — local `sentence-transformers` (default `KBLab/sentence-bert-swedish-cased`,
   768d); model+dim configurable. `lib/pdf_text.py` — PyMuPDF. `lib/r2.py` — Cloudflare R2
   (boto3; same env/bucket as the app's `lib/r2.ts`). `lib/db.get_pg_connection()` — shared
@@ -85,9 +90,9 @@ domains; no court/keyword/area filter at ingest).
 - `raw_data` holds the complete original record and is never mutated.
 - **Precedents**: upsert is on `canonical_id` (the source UUID) and **never** writes
   `area` (set by classification — the only trusted area field; `source_area_code` is
-  advisory, never filter on it) or `embedding` (set by the embed phase). `full_text` /
-  `raw_pdf_path` are COALESCE-preserved so a transient PDF failure on re-run can't blank
-  good content. Every precedent gets a `classification_queue` row — ranking orders the
+  advisory, never filter on it) or `embedding` (set by the embed phase). `full_text_path` /
+  `raw_pdf_path` are COALESCE-preserved so a transient R2/PDF failure on re-run can't blank
+  a good pointer. Every precedent gets a `classification_queue` row — ranking orders the
   work, it never drops a case (null-embedding rows get null priority, ranked last).
 
 ## Gotchas
@@ -123,9 +128,11 @@ domains; no court/keyword/area filter at ingest).
   PostgREST path can't express them. The embedding model is **local** (no paid API);
   its dimension MUST equal the `precedents.embedding vector(N)` column (768) or `Embedder`
   raises — to change it, alter the column + rebuild the HNSW index (migration `003`).
-- **Precedents R2 is optional but recommended**: without `CF_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/
-  `R2_SECRET_ACCESS_KEY` the backfill still extracts PDF text into `full_text`, it just
-  doesn't archive the originals (`raw_pdf_path` stays null).
+- **Precedents R2 is REQUIRED**: heavy content (PDF originals + extracted text) is stored
+  in R2, so `CF_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` must be set — the
+  backfill and embed phases abort without them. Free-tier disk note: Postgres holds no body
+  text, so the table fits ~250 MB; storing the body in PG (as the original 003 did) blew
+  past the free-tier 500 MB cap and flipped the DB read-only.
 - Stale pre-MCP comments still reference Haiku/enrich.py/connect.py:
   `domains.yaml:9`, `domains.yaml:78`, `status.py:59`, comment blocks in
   `migrations/001` (lines 69, 75, 109, 115), plus orphaned `.pyc` files in

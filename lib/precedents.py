@@ -4,22 +4,31 @@
 ingest.py / schema.py / ensure_domain_table. This module owns its bespoke flow
 against the tables created by migrations/003_precedents_corpus.sql:
 
-  backfill()       probe -> resumable unfiltered pull -> PDF→R2→text ->
-                   idempotent upsert on canonical_id -> cursor in ingestion_progress
-  embed()          embed every precedent where embedding is null (LOCAL model)
+  backfill()       probe -> resumable unfiltered pull -> heavy content to R2
+                   (PDF originals + extracted text) -> lean upsert on canonical_id
+                   -> cursor in ingestion_progress
+  embed()          embed every precedent where embedding is null (LOCAL model),
+                   reading the body text back from R2 by full_text_path
   populate_queue() rank ALL precedents by max cosine similarity to seed phrases;
                    one classification_queue row per precedent (ranking, not gating)
+
+STORAGE: heavy content lives in R2, not Postgres. Each record's extracted text
+goes to R2 (full_text_path) and any original PDF goes to R2 (raw_pdf_path); the
+DB row keeps only structured fields + a short summary + the embedding. R2 is
+therefore REQUIRED for the backfill. See migration 003's header.
 
 Invariants (mirroring ingest.py's PIPELINE_STATE_KEYS discipline):
   * Upsert NEVER writes `area` or `embedding` — owned by classification / embed,
     and must survive re-ingest. (Enforced by _UPSERT_COLUMNS + the ON CONFLICT set.)
-  * full_text / raw_pdf_path are COALESCE-preserved so a transient PDF failure on
-    re-run can't blank good content.
+  * full_text_path / raw_pdf_path are COALESCE-preserved so a transient R2/PDF
+    failure on re-run can't blank a good pointer.
   * Dedup/upsert key is canonical_id; re-runs never duplicate.
 """
 from __future__ import annotations
 
 import importlib
+import re
+from concurrent.futures import ThreadPoolExecutor
 
 import psycopg2.extras
 
@@ -29,13 +38,14 @@ from lib.embeddings import Embedder, to_pgvector
 SOURCE = "domstolsverket_precedents"  # ingestion_progress.source key
 R2_PREFIX = "precedents"
 
-# Source/advisory columns written on backfill. `area` and `embedding` are
-# deliberately absent — see module docstring.
+# Lean source/advisory columns written on backfill. `area` and `embedding` are
+# deliberately absent — see module docstring. The body is NOT here; only the R2
+# pointer (full_text_path) is.
 _UPSERT_COLUMNS = (
     "canonical_id", "court", "court_raw", "doc_type", "malnummer_raw",
     "malnummer_normalized", "decision_date", "publication_date",
-    "source_area_code", "title", "full_text", "source_url", "raw_pdf_path",
-    "metadata",
+    "source_area_code", "title", "summary", "source_url", "raw_pdf_path",
+    "full_text_path", "metadata",
 )
 
 _CONFLICT_SET = """
@@ -48,15 +58,15 @@ _CONFLICT_SET = """
   publication_date = excluded.publication_date,
   source_area_code = excluded.source_area_code,
   title = excluded.title,
-  full_text = coalesce(nullif(excluded.full_text, ''), precedents.full_text),
+  summary = excluded.summary,
   source_url = excluded.source_url,
   raw_pdf_path = coalesce(excluded.raw_pdf_path, precedents.raw_pdf_path),
+  full_text_path = coalesce(excluded.full_text_path, precedents.full_text_path),
   metadata = excluded.metadata
 """
 
 
 def _safe_key_part(s: str) -> str:
-    import re
     return re.sub(r"[^A-Za-z0-9._-]", "_", s or "")[:120]
 
 
@@ -112,48 +122,60 @@ def probe(config: dict) -> dict:
 # ──────────────────────────────────────────────────────────────────────────────
 # backfill
 # ──────────────────────────────────────────────────────────────────────────────
-def _attach_pdf_text(adapter, rec: dict, base_url: str, r2_ready: bool) -> None:
-    """Resolve full_text + raw_pdf_path for one record, handling PDF attachments."""
+def _attach_content(adapter, rec: dict, base_url: str) -> None:
+    """Resolve the body text + PDF originals and OFFLOAD them to R2.
+
+    Sets full_text_path (R2 key of extracted text) and raw_pdf_path (R2 key of the
+    primary original PDF). The body is never stored in Postgres.
+    """
+    text = rec.pop("_full_text", None)        # inline HTML body (referat), if any
     bilagor = rec.pop("_bilagor", []) or []
-    rec.setdefault("raw_pdf_path", None)
-    summary = (rec.get("metadata") or {}).get("summary")
+    rec["raw_pdf_path"] = None
+    rec["full_text_path"] = None
+    cid = rec["canonical_id"]
+    court = _safe_key_part(rec.get("court") or "NA")
 
-    if rec.get("full_text"):  # inline HTML body (referat) — no PDF needed
-        return
-    if not bilagor:
-        rec["full_text"] = summary
-        return
-
-    texts: list[str] = []
-    r2_keys: list[str] = []
-    for i, b in enumerate(bilagor):
-        fid = b.get("fillagring_id")
-        if not fid:
-            continue
-        try:
-            pdf_bytes = adapter.download_bilaga(base_url, fid)
-        except Exception as e:  # noqa: BLE001 — one bad attachment shouldn't abort
-            print(f"    pdf download failed ({rec['canonical_id']}): {str(e)[:120]}")
-            continue
-        if r2_ready:
-            key = (
-                f"{R2_PREFIX}/{_safe_key_part(rec.get('court') or 'NA')}/"
-                f"{_safe_key_part(rec['canonical_id'])}/{i}_{_safe_key_part(b.get('filnamn') or 'doc.pdf')}"
-            )
+    # PDF-served records: download each attachment, archive the original to R2,
+    # extract text.
+    if not text and bilagor:
+        texts: list[str] = []
+        pdf_keys: list[str] = []
+        for i, b in enumerate(bilagor):
+            fid = b.get("fillagring_id")
+            if not fid:
+                continue
+            try:
+                pdf_bytes = adapter.download_bilaga(base_url, fid)
+            except Exception as e:  # noqa: BLE001 — one bad attachment shouldn't abort
+                print(f"    pdf download failed ({cid}): {str(e)[:120]}")
+                continue
+            key = f"{R2_PREFIX}/{court}/{_safe_key_part(cid)}/{i}_{_safe_key_part(b.get('filnamn') or 'doc.pdf')}"
             try:
                 if not r2.object_exists(key):
                     r2.upload_bytes(key, pdf_bytes, "application/pdf")
-                r2_keys.append(key)
-            except Exception as e:  # noqa: BLE001 — storage failure is non-fatal
-                print(f"    r2 upload failed ({key}): {str(e)[:120]}")
-        txt = pdf_text.extract_text(pdf_bytes)
-        if txt:
-            texts.append(txt)
+                pdf_keys.append(key)
+            except Exception as e:  # noqa: BLE001
+                print(f"    r2 pdf upload failed ({key}): {str(e)[:120]}")
+            txt = pdf_text.extract_text(pdf_bytes)
+            if txt:
+                texts.append(txt)
+        text = ("\n\n".join(texts)).strip() or None
+        if pdf_keys:
+            rec["raw_pdf_path"] = pdf_keys[0]  # primary original; all listed in metadata
+            rec.setdefault("metadata", {})["r2_pdf_keys"] = pdf_keys
 
-    rec["full_text"] = ("\n\n".join(texts)).strip() or summary
-    if r2_keys:
-        rec["raw_pdf_path"] = r2_keys[0]  # primary original; all listed in metadata
-        rec.setdefault("metadata", {})["r2_keys"] = r2_keys
+    # Last resort so the embed phase has *something*: the short summary.
+    if not text:
+        text = rec.get("summary")
+
+    # Offload the extracted text to R2.
+    if text:
+        text_key = f"{R2_PREFIX}/{court}/{_safe_key_part(cid)}/text.txt"
+        try:
+            r2.upload_text(text_key, text)
+            rec["full_text_path"] = text_key
+        except Exception as e:  # noqa: BLE001
+            print(f"    r2 text upload failed ({cid}): {str(e)[:120]}")
 
 
 def _upsert(conn, rows: list[dict]) -> None:
@@ -164,7 +186,8 @@ def _upsert(conn, rows: list[dict]) -> None:
             r["canonical_id"], r.get("court"), r.get("court_raw"), r.get("doc_type"),
             r.get("malnummer_raw"), r.get("malnummer_normalized"),
             r.get("decision_date"), r.get("publication_date"), r.get("source_area_code"),
-            r.get("title"), r.get("full_text"), r.get("source_url"), r.get("raw_pdf_path"),
+            r.get("title"), r.get("summary"), r.get("source_url"),
+            r.get("raw_pdf_path"), r.get("full_text_path"),
             psycopg2.extras.Json(r.get("metadata") or {}),
         )
         for r in rows
@@ -192,6 +215,7 @@ def backfill(config: dict, limit: int | None = None, dry_run: bool = False) -> N
         for _page, pubs, _total in adapter.iter_pages(sc, 0):
             for raw in pubs:
                 rec = adapter.normalize(raw, base_url)
+                rec.pop("_full_text", None)
                 rec.pop("_bilagor", None)
                 print("  ", {k: rec.get(k) for k in (
                     "canonical_id", "court", "doc_type", "malnummer_normalized",
@@ -203,6 +227,14 @@ def backfill(config: dict, limit: int | None = None, dry_run: bool = False) -> N
         print(f"[dry-run] showed {shown} records; nothing written.")
         return
 
+    # Heavy content lives in R2, so R2 is mandatory for the backfill.
+    if not r2.is_configured():
+        raise SystemExit(
+            "R2 is required for the precedents backfill (PDF originals and extracted "
+            "text are stored in R2). Set CF_ACCOUNT_ID / R2_ACCESS_KEY_ID / "
+            "R2_SECRET_ACCESS_KEY in .env.local."
+        )
+
     conn = db.get_pg_connection()
     try:
         prog = _progress_get(conn)
@@ -211,12 +243,6 @@ def backfill(config: dict, limit: int | None = None, dry_run: bool = False) -> N
             start_page = int(prog["last_cursor"].get("sid_index", 0))
             print(f"[resume] continuing from page {start_page} "
                   f"(progress: {prog.get('total_ingested')}/{prog.get('total_expected')})")
-
-        r2_ready = r2.is_configured()
-        if not r2_ready:
-            print("[warn] R2 not configured (CF_ACCOUNT_ID / R2_ACCESS_KEY_ID / "
-                  "R2_SECRET_ACCESS_KEY) — PDF originals will NOT be archived; "
-                  "text is still extracted in-memory into full_text.")
 
         page_size = int(info["page_size"])
         total_expected = info["total"] if isinstance(info["total"], int) else None
@@ -227,7 +253,7 @@ def backfill(config: dict, limit: int | None = None, dry_run: bool = False) -> N
                 rec = adapter.normalize(raw, base_url)
                 if not rec.get("canonical_id"):
                     continue  # no upsert key — cannot store
-                _attach_pdf_text(adapter, rec, base_url, r2_ready)
+                _attach_content(adapter, rec, base_url)
                 rows.append(rec)
                 processed += 1
             _upsert(conn, rows)
@@ -257,11 +283,20 @@ def backfill(config: dict, limit: int | None = None, dry_run: bool = False) -> N
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# embed
+# embed (reads body text back from R2)
 # ──────────────────────────────────────────────────────────────────────────────
-def _embed_text(title, full_text, summary) -> str:
+def _embed_text(summary, title, body) -> str:
     # Summary first (densest signal), then title, then body; Embedder truncates.
-    return "\n\n".join(p for p in (summary, title, full_text) if p)
+    return "\n\n".join(p for p in (summary, title, body) if p)
+
+
+def _fetch_body(full_text_path: str | None) -> str:
+    if not full_text_path:
+        return ""
+    try:
+        return r2.download_text(full_text_path)
+    except Exception:  # noqa: BLE001 — missing/unreadable object -> embed title+summary only
+        return ""
 
 
 def embed(config: dict, limit: int | None = None, dry_run: bool = False) -> None:
@@ -275,42 +310,49 @@ def embed(config: dict, limit: int | None = None, dry_run: bool = False) -> None
             cur.execute("select count(*) from precedents where embedding is null")
             remaining = cur.fetchone()[0]
         print(f"[embed] model={embedder.model_name} dim={embedder.dimension}; "
-              f"{remaining} precedents need embedding.")
+              f"{remaining} precedents need embedding (body read from R2).")
         if dry_run:
             print("[dry-run] would load the model and embed the rows above.")
             return
         if remaining == 0:
             return
+        if not r2.is_configured():
+            raise SystemExit(
+                "R2 is required for the embed phase (body text is read from R2). "
+                "Set the R2 vars in .env.local."
+            )
 
         embedder.load()
         batch = int(emb_cfg.get("db_batch_size", 128))
         done = 0
-        while True:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "select id, title, full_text, metadata->>'summary' "
-                    "from precedents where embedding is null order by id limit %s",
-                    (batch,),
-                )
-                rows = cur.fetchall()
-            if not rows:
-                break
-            texts = [_embed_text(t, ft, s) for (_id, t, ft, s) in rows]
-            vecs = embedder.embed_passages(texts)
-            updates = [(to_pgvector(v), str(rows[i][0])) for i, v in enumerate(vecs)]
-            with conn.cursor() as cur:
-                psycopg2.extras.execute_values(
-                    cur,
-                    "update precedents as p set embedding = d.emb::vector "
-                    "from (values %s) as d(emb, id) where p.id = d.id::uuid",
-                    updates, page_size=batch,
-                )
-            conn.commit()
-            done += len(rows)
-            print(f"  embedded {done}/{remaining}")
-            if limit and done >= limit:
-                print(f"[limit] stopping after {done} (--limit {limit}).")
-                break
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            while True:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "select id, title, summary, full_text_path "
+                        "from precedents where embedding is null order by id limit %s",
+                        (batch,),
+                    )
+                    rows = cur.fetchall()
+                if not rows:
+                    break
+                bodies = list(pool.map(_fetch_body, [r[3] for r in rows]))
+                texts = [_embed_text(rows[i][2], rows[i][1], bodies[i]) for i in range(len(rows))]
+                vecs = embedder.embed_passages(texts)
+                updates = [(to_pgvector(v), str(rows[i][0])) for i, v in enumerate(vecs)]
+                with conn.cursor() as cur:
+                    psycopg2.extras.execute_values(
+                        cur,
+                        "update precedents as p set embedding = d.emb::vector "
+                        "from (values %s) as d(emb, id) where p.id = d.id::uuid",
+                        updates, page_size=batch,
+                    )
+                conn.commit()
+                done += len(rows)
+                print(f"  embedded {done}/{remaining}")
+                if limit and done >= limit:
+                    print(f"[limit] stopping after {done} (--limit {limit}).")
+                    break
         print(f"[embed] done. {done} embeddings written.")
     finally:
         conn.close()

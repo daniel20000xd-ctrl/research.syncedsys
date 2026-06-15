@@ -158,6 +158,14 @@ are no per-area domains and no court/keyword/area filter at ingest. It generates
 embeddings with a **local** model (no paid API) and populates a
 similarity-ranked `classification_queue`.
 
+**Storage architecture**: heavy content lives in **Cloudflare R2**, not Postgres.
+PDF originals (`raw_pdf_path`) and the extracted plain text (`full_text_path`)
+are stored in R2; the Postgres row keeps only the structured fields, a short
+summary, the R2 pointers and the `embedding`. So Postgres stays a thin,
+searchable index over content that lives in object storage (the whole table is
+roughly embeddings + HNSW + short fields), which keeps it well within the
+free-tier disk budget. R2 is therefore **required** for this pipeline.
+
 Because of the bespoke schema (canonical_id upsert key, `vector(768)` embedding,
 similarity ranking, resumable cursor), it runs through its own CLI —
 `backfill_precedents.py` — not `ingest.py` (which refuses it):
@@ -173,19 +181,21 @@ python backfill_precedents.py --phase all                   # full corpus, one s
 - **Resumable / idempotent**: a per-source cursor in `ingestion_progress` is
   saved after each page; restart resumes from it. Upsert is on `canonical_id`,
   and **never** overwrites `area` (classification) or `embedding` (embed phase).
-- **PDFs**: records served as PDF (domar/beslut since March 2025) are downloaded,
-  the original archived to Cloudflare R2 (`raw_pdf_path`, same bucket as the photo
-  pipeline), and text extracted with PyMuPDF into `full_text`. Without R2 creds,
-  text is still extracted; only the original archival is skipped.
+- **Content → R2**: records served as PDF (domar/beslut since March 2025) have
+  their original archived to R2 (`raw_pdf_path`) and text extracted with PyMuPDF;
+  records with an inline HTML body (referat) have that body stripped to text. In
+  both cases the extracted text is uploaded to R2 (`full_text_path`) — never
+  stored in Postgres. R2 is **required**; the backfill aborts without it.
 - **Embeddings**: local `sentence-transformers` (default
   `KBLab/sentence-bert-swedish-cased`, 768-dim to match the column). Model +
-  dimension are configurable in `domains.yaml → source_config.embeddings`.
+  dimension are configurable in `domains.yaml → source_config.embeddings`. The
+  embed phase reads each body back from R2 (`full_text_path`) to embed it.
 - **Queue ranking, never gating**: `priority` is the max cosine similarity to the
   seed phrase(s) (`source_config.seed_phrases`, or `--seed`). **Every** precedent
   gets a queue row — low-similarity ones are ranked last, never dropped.
 - **Extra env**: needs `RESEARCH_DATABASE_URL` (+ `RESEARCH_DB_PASSWORD`) for the
-  embed/queue phases (pgvector writes + cosine ranking) and the R2 vars for PDF
-  archival (see `.env.example`). Extra deps: `boto3`, `pymupdf`,
+  embed/queue phases (pgvector writes + cosine ranking) and the R2 vars (content
+  storage; see `.env.example`). Extra deps: `boto3`, `pymupdf`,
   `sentence-transformers`.
 - **Two-phase by design**: this is the backfill path; a future delta mode over
   the Sök-rättspraxis RSS feed reuses the adapter's `normalize()` unchanged.

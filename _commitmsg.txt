@@ -1,0 +1,23 @@
+Offload precedents content to R2; keep Postgres lean
+
+The corpus stored full_text plus the full raw record in Postgres, which blew
+past the research project's free-tier 500 MB disk cap (hit 713 MB and the DB
+went read-only mid-embed). Rework so heavy content lives in Cloudflare R2 and
+Postgres holds only a searchable index + embeddings.
+
+- migration 003: drop the full_text column; add full_text_path (R2 key for the
+  extracted text) and promote summary to a column; fts is now generated over
+  title + summary. precedents is now ~embeddings + HNSW + short fields.
+- lib/precedents.py: backfill uploads PDF originals AND extracted text to R2
+  (raw_pdf_path / full_text_path) and upserts the lean row (no body); embed
+  reads the body back from R2 by full_text_path (threaded GETs). R2 is now
+  required - backfill/embed abort without it.
+- lib/r2.py: add upload_text / download_text / download_bytes.
+- adapter: body becomes internal (_full_text); summary promoted to top-level.
+- .env.example / README / CLAUDE.md: document the R2-offload architecture.
+
+Rebuilt the table (reclaimed 713 MB -> 14 MB; read-only cleared) and verified a
+100-row slice: backfilled with text in R2 (no body in PG), embedded from R2,
+ranked; a PDF record offloads original + extracted text to R2 (both confirmed).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>

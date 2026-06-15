@@ -244,10 +244,11 @@ def normalize(raw: dict, base_url: str) -> dict:
     """Map one PubliceringDTO to a precedents-shaped dict.
 
     Sets only source/advisory fields. `area` and `embedding` are NEVER set here —
-    they're owned by classification and the embed phase respectively, and must
-    survive re-ingest. `full_text` here is the inline HTML body (referat); for
-    PDF-only records it is None and the orchestrator fills it from the PDF.
-    `_bilagor` is internal (PDF step) and is dropped before the DB write.
+    owned by classification / the embed phase, and must survive re-ingest. The
+    body is NOT a Postgres column: `_full_text` (inline HTML body for referat;
+    None for PDF-only) and `_bilagor` are internal — the orchestrator uploads the
+    text and any PDF originals to R2, sets full_text_path / raw_pdf_path, and
+    drops both before the DB write.
     """
     domstol = raw.get("domstol") or {}
     bilagor = [
@@ -292,10 +293,10 @@ def normalize(raw: dict, base_url: str) -> dict:
         "publication_date": (pub[:10] if isinstance(pub, str) and pub else None),
         "source_area_code": "; ".join(rattsomrade) or None,  # ADVISORY — never filter
         "title": title or None,
-        "full_text": _strip_html(raw.get("innehall")),  # None for PDF-only records
+        "summary": _strip_html(raw.get("sammanfattning")),  # short headnote — kept in PG
         "source_url": detail_url(base_url, str(record_id)) if record_id else None,
+        # raw_pdf_path / full_text_path are set by the orchestrator after R2 upload.
         "metadata": {
-            "summary": _strip_html(raw.get("sammanfattning")),
             "keywords": raw.get("nyckelordLista") or [],
             "lagrum": raw.get("lagrumLista") or [],
             "forarbeten": raw.get("forarbeteLista") or [],
@@ -305,12 +306,11 @@ def normalize(raw: dict, base_url: str) -> dict:
             "publiceringsform": raw.get("publiceringsform"),
             "grupp_korrelationsnummer": raw.get("gruppKorrelationsnummer"),
             "attachments": [b.get("filnamn") for b in (raw.get("bilagaLista") or [])],
-            # The full source envelope is intentionally NOT stored: its body
-            # (innehall) already lives in full_text, and the record is re-fetchable
-            # by canonical_id (the source UUID). Hoarding it roughly doubled text
-            # storage (~170 MB across the 17k-row corpus). The precedents schema
-            # (migration 003) has no raw_data column by design — only this curated
-            # metadata — so we keep just the useful, classification-relevant fields.
+            # The full source envelope is intentionally NOT stored — the body lives
+            # in R2 (full_text_path) and the record is re-fetchable by canonical_id.
+            # Migration 003 has no raw_data/full_text column by design.
         },
-        "_bilagor": bilagor,  # internal — consumed by the PDF step, not a column
+        # internal — consumed by the orchestrator, dropped before the DB write:
+        "_full_text": _strip_html(raw.get("innehall")),  # inline body (referat); None for PDF-only
+        "_bilagor": bilagor,
     }
