@@ -11,3 +11,7 @@ venv/
 
 # OS
 .DS_Store
+
+# Scratch (commit-message files, throwaway probes)
+_commitmsg.txt
+_*.py
