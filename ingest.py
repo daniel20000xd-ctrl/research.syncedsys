@@ -51,6 +51,15 @@ def main() -> None:
     config = registry.get_domain(args.domain)
     table = config["table_name"]
 
+    # The precedents corpus is a bespoke table (not the base schema) with its own
+    # resumable, embedding-aware pipeline. Refuse it here so ensure_domain_table
+    # never tries to apply the base schema/indexes to it.
+    if config.get("pipeline") == "precedents":
+        raise SystemExit(
+            f"Domain '{args.domain}' uses the bespoke precedents pipeline. "
+            f"Run: python backfill_precedents.py --phase all --domain {args.domain}"
+        )
+
     if not args.dry_run:
         db.ensure_domain_table(args.domain, config)
 

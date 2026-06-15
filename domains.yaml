@@ -41,6 +41,35 @@ domains:
         - "Dödsbodelägare"
         - "Arvsskatt"
         - "Arvsfonden"
+        - "Efterarv"
+        - "Arvsavstående"
+        - "Sekundosuccession"
+        - "Sekundosuccessor"
+        - "Legat"
+        - "Inbördes testamente"
+        - "Nödtestamente"
+        - "Holografiskt testamente"
+        - "Tilläggsbouppteckning"
+        - "Fri förfoganderätt"
+        - "Förmånstagare"
+        - "Förmånstagarförordnande"
+        - "Arvsberättigad"
+        - "Bröstarvinge"
+        - "Klandertalan"
+        - "Klanderpreskription"
+        - "Klanderfrist"
+        - "Klander av testamente"
+        - "Klander av arvskifte"
+        - "Testamentes ogiltighet"
+        - "Testamentsklander"
+        - "Jämkning i testamente"
+        - "Laglottsanspråk"
+        - "Återkallelse av testamente"
+        - "Återgång av legat"
+        - "Efterlevande make"
+        - "Partssuccession"
+        - "Formkrav"
+        - "Allmänna arvsfonden"
       page_size: 50
       request_delay_seconds: 0.5
     extra_columns:
@@ -63,6 +92,59 @@ domains:
       - outcome         # case outcome type (e.g. bifall, avslag, återförvisning)
       - lagrum_area     # area of ÄB or other law primarily concerned
       - significance    # prejudikat, vägledande, notisfall
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Higher-court precedent corpus — BESPOKE pipeline (does NOT use the base
+  # schema / ensure_domain_table). One unfiltered domain targeting the single
+  # `precedents` table (migrations/003). Legal-area classification happens AFTER
+  # ingest, so there are no per-area domains and no court/keyword/area filter.
+  # Run it with backfill_precedents.py (ingest.py refuses this domain).
+  # ───────────────────────────────────────────────────────────────────────────
+  higher_court_precedents:
+    display_name: "Higher-Court Precedents (Sök rättspraxis)"
+    table_name: "precedents"            # the bespoke corpus table, not a domain table
+    pipeline: "precedents"              # marker: route to lib/precedents, not ingest.py
+    source_adapter: "domstolsverket_precedents"
+    source_config:
+      base_url: "https://rattspraxis.etjanst.domstol.se"
+      page_size: 100                    # antalPerSida (probed total ≈ 17.3k)
+      request_delay_seconds: 0.5        # polite inter-page delay
+      # Local embedding model — NO paid API. Default width matches the
+      # precedents.embedding vector(768) column. To switch to a model of a
+      # different width, change `dimension` AND alter the column + rebuild the
+      # HNSW index (see migrations/003 Section 2-3).
+      embeddings:
+        model: "KBLab/sentence-bert-swedish-cased"   # Swedish-tuned, 768d
+        dimension: 768
+        batch_size: 32                  # model encode batch
+        db_batch_size: 128              # rows per DB round-trip
+        passage_prefix: ""              # e5 models want "passage: "
+        query_prefix: ""                # e5 models want "query: "
+        max_chars: 8000                 # truncate text before encoding
+        device: null                    # null -> auto (cpu/cuda)
+      # Seed phrases describing the target niche for classification PRIORITY only
+      # (ranking, never gating — every precedent still gets a queue row). Edit to
+      # your niche, or override per-run with --seed. Default: inheritance/estate
+      # law (matches the arv_testamente research focus).
+      seed_phrases:
+        - "arvsrätt, testamente och dödsbo"
+        - "laglott och bröstarvinges skydd"
+        - "klander av testamente och testamentes ogiltighet"
+        - "boutredning, arvskifte och bodelning"
+        - "efterarv och fri förfoganderätt"
+    # area is set later by OUR classification and is the only trusted area field;
+    # these advisory categories satisfy the registry validator only.
+    structural_tag_categories:
+      - principle
+      - procedural
+      - outcome
+      - lagrum_area
+      - significance
+    enrichment_context: |
+      Swedish higher-court precedents (HD/HFD, the hovrätter and kammarrätter,
+      Arbetsdomstolen, Mark- och miljööverdomstolen, Patent- och marknads-
+      överdomstolen, Migrationsöverdomstolen, etc.). Raw unfiltered corpus;
+      legal area is assigned by our own classification, not at ingest.
 
   # ─────────────────────────────────────────────────────────────────────────
   # TEMPLATE FOR NEW DOMAINS (uncomment and fill in)

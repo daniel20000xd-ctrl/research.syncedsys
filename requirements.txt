@@ -3,3 +3,8 @@ psycopg2-binary>=2.9.0
 python-dotenv>=1.0.0
 pyyaml>=6.0.0
 requests>=2.31.0
+
+# Higher-court precedents backfill (backfill_precedents.py) only:
+boto3>=1.34.0                 # Cloudflare R2 (S3 API) — PDF originals
+pymupdf>=1.24.0              # PDF text extraction (import fitz)
+sentence-transformers>=3.0.0  # LOCAL embeddings (no paid API)

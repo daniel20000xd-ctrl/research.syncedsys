@@ -35,18 +35,28 @@ def get_client() -> Client:
     return _client
 
 
-@contextmanager
-def _pg_cursor():
-    """Yield a psycopg2 cursor on the research DB; commit on success, always close."""
+def get_pg_connection():
+    """Open a psycopg2 connection to the research DB (caller commits / closes).
+
+    Shared by the DDL path (`_pg_cursor`) and the precedents pipeline, which
+    needs direct DB access for pgvector embedding writes and cosine similarity
+    ranking — operations PostgREST can't express.
+    """
     dsn = os.environ.get("RESEARCH_DATABASE_URL")
     if not dsn:
         raise RuntimeError(
-            "RESEARCH_DATABASE_URL must be set for DDL operations (see .env.example)."
+            "RESEARCH_DATABASE_URL must be set for direct DB operations (see .env.example)."
         )
     # Pass the password separately rather than embedding it in the URL, so
     # special / non-ASCII characters in it can't break URI parsing.
     pw = os.environ.get("RESEARCH_DB_PASSWORD")
-    conn = psycopg2.connect(dsn, password=pw) if pw else psycopg2.connect(dsn)
+    return psycopg2.connect(dsn, password=pw) if pw else psycopg2.connect(dsn)
+
+
+@contextmanager
+def _pg_cursor():
+    """Yield a psycopg2 cursor on the research DB; commit on success, always close."""
+    conn = get_pg_connection()
     try:
         with conn.cursor() as cur:
             yield cur

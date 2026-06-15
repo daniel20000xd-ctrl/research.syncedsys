@@ -50,6 +50,9 @@ to Claude, so tagging stays consistent without any per-domain code.
   then `002`). They create `research_domains`, `concepts`, the `update_updated_at()`
   function every domain table's trigger depends on, and the per-domain guidance
   columns the API/MCP serve to Claude.
+- For the **higher-court precedents backfill** only, also run `003` (creates
+  `precedents`, `classification_queue`, `ingestion_progress` and the pgvector
+  extension). See [Higher-court precedents](#higher-court-precedents-bespoke-pipeline).
 - A research Supabase project (separate from the main Syncedsys product DB).
 
 ## Setup
@@ -144,20 +147,69 @@ python status.py
 Prints record counts and Phase 2 progress per domain, plus every concept with its
 run count and the domains it has been applied to.
 
+## Higher-court precedents (bespoke pipeline)
+
+The `higher_court_precedents` domain is **not** a base-schema domain table. It
+backfills the *entire* Domstolsverket "Sök rättspraxis" corpus — every higher
+court (HD, HFD, the hovrätter and kammarrätter, Arbetsdomstolen, MÖD, PMÖD,
+Migrationsöverdomstolen…), **unfiltered** — into the single `precedents` table
+(migration `003`). Legal-area classification happens *after* ingest, so there
+are no per-area domains and no court/keyword/area filter at ingest. It generates
+embeddings with a **local** model (no paid API) and populates a
+similarity-ranked `classification_queue`.
+
+Because of the bespoke schema (canonical_id upsert key, `vector(768)` embedding,
+similarity ranking, resumable cursor), it runs through its own CLI —
+`backfill_precedents.py` — not `ingest.py` (which refuses it):
+
+```bash
+python backfill_precedents.py --phase probe                 # log total + API shape
+python backfill_precedents.py --phase backfill [--limit N]  # resumable, idempotent pull
+python backfill_precedents.py --phase embed    [--limit N]  # local embeddings (null only)
+python backfill_precedents.py --phase queue    [--seed "…"] # rank ALL precedents
+python backfill_precedents.py --phase all                   # full corpus, one shot
+```
+
+- **Resumable / idempotent**: a per-source cursor in `ingestion_progress` is
+  saved after each page; restart resumes from it. Upsert is on `canonical_id`,
+  and **never** overwrites `area` (classification) or `embedding` (embed phase).
+- **PDFs**: records served as PDF (domar/beslut since March 2025) are downloaded,
+  the original archived to Cloudflare R2 (`raw_pdf_path`, same bucket as the photo
+  pipeline), and text extracted with PyMuPDF into `full_text`. Without R2 creds,
+  text is still extracted; only the original archival is skipped.
+- **Embeddings**: local `sentence-transformers` (default
+  `KBLab/sentence-bert-swedish-cased`, 768-dim to match the column). Model +
+  dimension are configurable in `domains.yaml → source_config.embeddings`.
+- **Queue ranking, never gating**: `priority` is the max cosine similarity to the
+  seed phrase(s) (`source_config.seed_phrases`, or `--seed`). **Every** precedent
+  gets a queue row — low-similarity ones are ranked last, never dropped.
+- **Extra env**: needs `RESEARCH_DATABASE_URL` (+ `RESEARCH_DB_PASSWORD`) for the
+  embed/queue phases (pgvector writes + cosine ranking) and the R2 vars for PDF
+  archival (see `.env.example`). Extra deps: `boto3`, `pymupdf`,
+  `sentence-transformers`.
+- **Two-phase by design**: this is the backfill path; a future delta mode over
+  the Sök-rättspraxis RSS feed reuses the adapter's `normalize()` unchanged.
+
 ## Project layout
 
 ```
 syncedsys-pipeline/
 ├── domains.yaml          # domain registry — the single source of truth
-├── ingest.py             # Phase 1 — ingest
+├── ingest.py             # Phase 1 — ingest (base-schema domain tables)
+├── backfill_precedents.py# bespoke higher-court precedents corpus CLI
 ├── status.py             # dashboard
 ├── adapters/             # one file per source type, each exposing fetch()
-│   ├── domstolsverket.py
+│   ├── domstolsverket.py            # keyword-bound rättspraxis -> domain tables
+│   ├── domstolsverket_precedents.py # UNFILTERED corpus -> precedents (probe/page/PDF)
 │   └── manual.py         # ingest a local JSON array of base-schema records
 └── lib/
     ├── registry.py       # load + validate domains.yaml
     ├── schema.py         # generate CREATE TABLE SQL for a domain
-    └── db.py             # Supabase (DML) + psycopg2 (DDL) + registry updates
+    ├── db.py             # Supabase (DML) + psycopg2 (DDL/direct) + registry updates
+    ├── precedents.py     # precedents orchestration: backfill / embed / queue
+    ├── embeddings.py     # local sentence-transformers wrapper
+    ├── pdf_text.py       # PyMuPDF text extraction
+    └── r2.py             # Cloudflare R2 client (mirror of the app's lib/r2.ts)
 ```
 
 ## Notes
