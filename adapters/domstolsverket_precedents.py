@@ -305,7 +305,12 @@ def normalize(raw: dict, base_url: str) -> dict:
             "publiceringsform": raw.get("publiceringsform"),
             "grupp_korrelationsnummer": raw.get("gruppKorrelationsnummer"),
             "attachments": [b.get("filnamn") for b in (raw.get("bilagaLista") or [])],
-            "raw": raw,  # complete original record, untouched
+            # The full source envelope is intentionally NOT stored: its body
+            # (innehall) already lives in full_text, and the record is re-fetchable
+            # by canonical_id (the source UUID). Hoarding it roughly doubled text
+            # storage (~170 MB across the 17k-row corpus). The precedents schema
+            # (migration 003) has no raw_data column by design — only this curated
+            # metadata — so we keep just the useful, classification-relevant fields.
         },
         "_bilagor": bilagor,  # internal — consumed by the PDF step, not a column
     }
