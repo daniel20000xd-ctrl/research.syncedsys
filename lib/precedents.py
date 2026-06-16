@@ -309,6 +309,11 @@ def backfill(config: dict, domain_key: str | None = None,
     finally:
         conn.close()
 
+    # Stamp record_count + last_ingested_at in research_domains so the Research
+    # UI card shows the real total (not 0) and the dashboard is accurate.
+    if domain_key:
+        db.update_domain_stats(domain_key, "last_ingested_at")
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # embed (reads body text back from R2)
