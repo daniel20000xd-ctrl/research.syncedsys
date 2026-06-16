@@ -43,7 +43,7 @@ R2_PREFIX = "precedents"
 # pointer (full_text_path) is.
 _UPSERT_COLUMNS = (
     "canonical_id", "court", "court_raw", "doc_type", "malnummer_raw",
-    "malnummer_normalized", "decision_date", "publication_date",
+    "malnummer_normalized", "decision_date", "publication_date", "record_date",
     "source_area_code", "title", "summary", "source_url", "raw_pdf_path",
     "full_text_path", "metadata",
 )
@@ -56,6 +56,7 @@ _CONFLICT_SET = """
   malnummer_normalized = excluded.malnummer_normalized,
   decision_date = excluded.decision_date,
   publication_date = excluded.publication_date,
+  record_date = excluded.record_date,
   source_area_code = excluded.source_area_code,
   title = excluded.title,
   summary = excluded.summary,
@@ -117,6 +118,29 @@ def probe(config: dict) -> dict:
     print("[probe] response keys    :", info["response_keys"])
     print("[probe] record keys      :", info["record_keys"])
     return info
+
+
+def _register_domain(domain_key: str | None, config: dict) -> None:
+    """Register precedents in research_domains so the MCP/API/UI can see it.
+
+    precedents is ingested by this bespoke pipeline (not ensure_domain_table), but
+    Phase 2/3 classification + the UI go through the standard domain registry — so
+    we publish the registry row (and the tagging guidance from domains.yaml) here.
+    Idempotent; also done by migration 004 for the already-ingested corpus.
+    """
+    if not domain_key:
+        return
+    db.get_client().table("research_domains").upsert(
+        {
+            "domain_key": domain_key,
+            "display_name": config.get("display_name"),
+            "table_name": config["table_name"],
+            "enrichment_context": config.get("enrichment_context"),
+            "structural_tag_categories": config.get("structural_tag_categories") or [],
+        },
+        on_conflict="domain_key",
+    ).execute()
+    print(f"[backfill] registered domain '{domain_key}' in research_domains")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -185,7 +209,8 @@ def _upsert(conn, rows: list[dict]) -> None:
         (
             r["canonical_id"], r.get("court"), r.get("court_raw"), r.get("doc_type"),
             r.get("malnummer_raw"), r.get("malnummer_normalized"),
-            r.get("decision_date"), r.get("publication_date"), r.get("source_area_code"),
+            r.get("decision_date"), r.get("publication_date"), r.get("record_date"),
+            r.get("source_area_code"),
             r.get("title"), r.get("summary"), r.get("source_url"),
             r.get("raw_pdf_path"), r.get("full_text_path"),
             psycopg2.extras.Json(r.get("metadata") or {}),
@@ -201,7 +226,8 @@ def _upsert(conn, rows: list[dict]) -> None:
     conn.commit()
 
 
-def backfill(config: dict, limit: int | None = None, dry_run: bool = False) -> None:
+def backfill(config: dict, domain_key: str | None = None,
+             limit: int | None = None, dry_run: bool = False) -> None:
     sc = config["source_config"]
     base_url = sc["base_url"].rstrip("/")
     adapter = importlib.import_module(f"adapters.{config['source_adapter']}")
@@ -234,6 +260,8 @@ def backfill(config: dict, limit: int | None = None, dry_run: bool = False) -> N
             "text are stored in R2). Set CF_ACCOUNT_ID / R2_ACCESS_KEY_ID / "
             "R2_SECRET_ACCESS_KEY in .env.local."
         )
+
+    _register_domain(domain_key, config)
 
     conn = db.get_pg_connection()
     try:
@@ -309,24 +337,31 @@ def embed(config: dict, limit: int | None = None, dry_run: bool = False) -> None
         with conn.cursor() as cur:
             cur.execute("select count(*) from precedents where embedding is null")
             remaining = cur.fetchone()[0]
-        print(f"[embed] model={embedder.model_name} dim={embedder.dimension}; "
-              f"{remaining} precedents need embedding (body read from R2).")
-        if dry_run:
-            print("[dry-run] would load the model and embed the rows above.")
-            return
-        if remaining == 0:
-            return
-        if not r2.is_configured():
-            raise SystemExit(
-                "R2 is required for the embed phase (body text is read from R2). "
-                "Set the R2 vars in .env.local."
-            )
+    finally:
+        conn.close()
+    print(f"[embed] model={embedder.model_name} dim={embedder.dimension}; "
+          f"{remaining} precedents need embedding (body read from R2).")
+    if dry_run:
+        print("[dry-run] would load the model and embed the rows above.")
+        return
+    if remaining == 0:
+        return
+    if not r2.is_configured():
+        raise SystemExit(
+            "R2 is required for the embed phase (body text is read from R2). "
+            "Set the R2 vars in .env.local."
+        )
 
-        embedder.load()
-        batch = int(emb_cfg.get("db_batch_size", 128))
-        done = 0
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            while True:
+    embedder.load()
+    batch = int(emb_cfg.get("db_batch_size", 128))
+    done = 0
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        while True:
+            # Fresh connection per batch — robust to the session pooler dropping a
+            # long-lived connection partway through a multi-thousand-row embed run
+            # (which silently stalled an earlier full run).
+            conn = db.get_pg_connection()
+            try:
                 with conn.cursor() as cur:
                     cur.execute(
                         "select id, title, summary, full_text_path "
@@ -348,14 +383,14 @@ def embed(config: dict, limit: int | None = None, dry_run: bool = False) -> None
                         updates, page_size=batch,
                     )
                 conn.commit()
-                done += len(rows)
-                print(f"  embedded {done}/{remaining}")
-                if limit and done >= limit:
-                    print(f"[limit] stopping after {done} (--limit {limit}).")
-                    break
-        print(f"[embed] done. {done} embeddings written.")
-    finally:
-        conn.close()
+            finally:
+                conn.close()
+            done += len(rows)
+            print(f"  embedded {done}/{remaining}")
+            if limit and done >= limit:
+                print(f"[limit] stopping after {done} (--limit {limit}).")
+                break
+    print(f"[embed] done. {done} embeddings written.")
 
 
 # ──────────────────────────────────────────────────────────────────────────────

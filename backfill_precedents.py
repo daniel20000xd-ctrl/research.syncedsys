@@ -63,7 +63,7 @@ def main() -> None:
     if args.phase in ("probe",):
         precedents.probe(config)
     if args.phase in ("backfill", "all"):
-        precedents.backfill(config, limit=args.limit, dry_run=args.dry_run)
+        precedents.backfill(config, domain_key=args.domain, limit=args.limit, dry_run=args.dry_run)
     if args.phase in ("embed", "all"):
         precedents.embed(config, limit=args.limit, dry_run=args.dry_run)
     if args.phase in ("queue", "all"):

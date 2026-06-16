@@ -193,6 +193,12 @@ python backfill_precedents.py --phase all                   # full corpus, one s
 - **Queue ranking, never gating**: `priority` is the max cosine similarity to the
   seed phrase(s) (`source_config.seed_phrases`, or `--seed`). **Every** precedent
   gets a queue row — low-similarity ones are ranked last, never dropped.
+- **Classification / grouping access** (migration `004`): the corpus is registered
+  in `research_domains` and carries the base-schema tag columns, so the existing
+  i.syncedsys research **MCP / API / UI** can browse, search, enrich
+  (`structural_tags`), and connect concepts (`derived_tags`) over it with no code
+  change. The embeddings + queue decide the *order* of work; the tags (and `area`)
+  hold the resulting *groupings*.
 - **Extra env**: needs `RESEARCH_DATABASE_URL` (+ `RESEARCH_DB_PASSWORD`) for the
   embed/queue phases (pgvector writes + cosine ranking) and the R2 vars (content
   storage; see `.env.example`). Extra deps: `boto3`, `pymupdf`,

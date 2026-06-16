@@ -73,6 +73,17 @@ domains; no court/keyword/area filter at ingest).
   `full_text_path` (extracted text) are R2 keys; the DB row keeps only structured fields, a
   short `summary`, the pointers and the `embedding`. Keeps the table ~embeddings+HNSW+short
   fields (fits free-tier disk). R2 is REQUIRED.
+- **Classification access (migration 004)**: precedents IS registered in `research_domains`
+  and carries the base-schema tag/state columns (`structural_tags`, `derived_tags`,
+  `phase2_status`, `phase2_ran_at`, `phase3_concept_ids`, `record_date`), so the EXISTING
+  i.syncedsys research MCP/API/UI can search, enrich and connect it with **no code change /
+  deploy** — even though the table is built by this bespoke pipeline, not
+  ensure_domain_table. Division of labour: `embedding` + `classification_queue` are the
+  PRIORITY layer (what to classify first); `structural_tags`/`derived_tags`/`area` are the
+  RESULT (the groupings). `backfill` self-registers the domain via `_register_domain`; the
+  generic `ingest.py` still refuses it (its DDL is bespoke). Caveat: the routes `select('*')`,
+  so responses include the `embedding`/`fts` columns until i.syncedsys can be redeployed to
+  strip them (payload size only, non-breaking).
 - `lib/embeddings.py` — local `sentence-transformers` (default `KBLab/sentence-bert-swedish-cased`,
   768d); model+dim configurable. `lib/pdf_text.py` — PyMuPDF. `lib/r2.py` — Cloudflare R2
   (boto3; same env/bucket as the app's `lib/r2.ts`). `lib/db.get_pg_connection()` — shared

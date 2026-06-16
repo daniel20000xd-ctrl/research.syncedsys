@@ -291,6 +291,8 @@ def normalize(raw: dict, base_url: str) -> dict:
         "malnummer_normalized": ref_norm,
         "decision_date": raw.get("avgorandedatum") or None,
         "publication_date": (pub[:10] if isinstance(pub, str) and pub else None),
+        # record_date is the base-schema date the research API orders/filters on.
+        "record_date": raw.get("avgorandedatum") or (pub[:10] if isinstance(pub, str) and pub else None),
         "source_area_code": "; ".join(rattsomrade) or None,  # ADVISORY — never filter
         "title": title or None,
         "summary": _strip_html(raw.get("sammanfattning")),  # short headnote — kept in PG
