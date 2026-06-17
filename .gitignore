@@ -12,6 +12,7 @@ venv/
 # OS
 .DS_Store
 
-# Scratch (commit-message files, throwaway probes)
+# Scratch (commit-message files, throwaway probes, agent temp batches)
 _commitmsg.txt
 _*.py
+_*.json
