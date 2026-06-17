@@ -132,6 +132,60 @@ domains:
         - "klander av testamente och testamentes ogiltighet"
         - "boutredning, arvskifte och bodelning"
         - "efterarv och fri förfoganderätt"
+      # Phase-2 classification spec — consumed by enrich_batch.py and handed to the
+      # enrichment agents. ONE primary `area` per case. Granularity tracks relevance:
+      # immaterialrätt is split into sub-disciplines (the focus area); other fields stay
+      # coarse and can be re-enriched/split later. övriga_rättsområden is the catch-all.
+      classification:
+        areas:
+          - arv_testamente
+          - familjerätt
+          - avtalsrätt
+          - skadeståndsrätt
+          - straffrätt
+          - arbetsrätt
+          - fastighetsrätt
+          - processrätt
+          - förvaltningsrätt
+          - skatterätt
+          - miljörätt
+          - migrationsrätt
+          - socialförsäkringsrätt
+          - patenträtt
+          - upphovsrätt
+          - varumärkesrätt
+          - mönsterrätt
+          - företagshemligheter
+          - marknadsrätt
+          - övriga_rättsområden
+        # IP sub-areas also get an umbrella `immaterialrätt` tag (added automatically by
+        # enrich_batch.py) so all IP can be pulled together or drilled into individually.
+        ip_areas:
+          - patenträtt
+          - upphovsrätt
+          - varumärkesrätt
+          - mönsterrätt
+          - företagshemligheter
+        instruction: |
+          You are classifying ONE Swedish higher-court precedent for a legal-research
+          corpus. You are given the case's full text. Decide by what the case
+          SUBSTANTIVELY decides (its ratio), NOT by which court issued it (e.g. a Mark-
+          och miljööverdomstolen case about fastighetsbildning is fastighetsrätt, not
+          miljörätt). Output, per case:
+          - area: EXACTLY ONE value from the areas list. If it genuinely fits none, use
+            övriga_rättsområden. Immaterialrätt precision:
+              patenträtt = patent, patentintrång, uppfinnings-/nyhetshöjd, SPC.
+              upphovsrätt = upphovsrätt, verkshöjd, närstående rättigheter (incl. källkod).
+              varumärkesrätt = varumärke, förväxlingsrisk, särskiljningsförmåga.
+              mönsterrätt = mönster/design/formgivning.
+              företagshemligheter = FHL, obehörigt angrepp på företagshemlighet.
+              marknadsrätt = marknadsföringslagen, konkurrenslagen, oskäliga avtalsvillkor
+                i konsumentförhållanden.
+          - tags: 3–7 structural tags, each {tag, category} with category in
+            {principle, procedural, outcome, lagrum_area}. Specific legal concepts the
+            case turns on, in Swedish, drawn from the ratio — don't invent. Do NOT output
+            significance (it's taken from the source `typ` field automatically).
+          Be precise and conservative.
     # area is set later by OUR classification and is the only trusted area field;
     # these advisory categories satisfy the registry validator only.
     structural_tag_categories:
