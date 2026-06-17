@@ -67,6 +67,12 @@ def get_create_table_sql(domain_key: str, config: dict) -> str:
         # Table — IF NOT EXISTS so re-runs are safe.
         f"CREATE TABLE IF NOT EXISTS {table} (\n  {columns_sql},\n"
         f"  CONSTRAINT {unique_name} UNIQUE (external_id, domain)\n);",
+        # RLS: ENABLED with NO policies — service-key-only, matching the
+        # foundation tables (migration 001). Without this a domain table is
+        # readable/writable by anyone with the project URL (the Supabase
+        # "rls_disabled_in_public" advisory). Idempotent, so it's re-asserted on
+        # every ingest. Access control lives in the i.syncedsys API, not the DB.
+        f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;",
         # Full-text search over title + summary (Swedish config).
         f"CREATE INDEX IF NOT EXISTS {table}_fts_idx ON {table} "
         f"USING GIN (to_tsvector('swedish', coalesce(title,'') || ' ' || coalesce(summary,'')));",

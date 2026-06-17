@@ -108,6 +108,16 @@ domains; no court/keyword/area filter at ingest).
 
 ## Gotchas
 
+- **Domain tables need RLS (fixed in `lib/schema.py`, 2026-06-17).** The generated DDL now
+  emits `ALTER TABLE … ENABLE ROW LEVEL SECURITY` for every domain table. Without it the
+  table is publicly readable/writable via the project URL (Supabase `rls_disabled_in_public`)
+  — `arv_testamente` was exposed exactly this way. RLS is re-asserted on every ingest
+  (idempotent); never remove it. New domains are secured at creation.
+- **This repo is a local CLI — NOT deployed.** It's connected to a Vercel project
+  (`research.syncedsys`, under the kianmoradpour scope) that fails every push with "No python
+  entrypoint." `vercel.json` (`git.deploymentEnabled.main = false`) disables auto-deploy. Don't
+  add a web entrypoint expecting it to serve; Phase 2/3 + the API live in i.syncedsys.
+
 - **Migrations are manual.** Nothing in this repo executes `migrations/`. The header
   comment in 002 claiming the pipeline applies it automatically is wrong — if 002 hasn't
   been run, the first ingest fails at the `research_domains` upsert (missing columns).
