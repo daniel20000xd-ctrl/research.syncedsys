@@ -1,28 +1,22 @@
-"""Source adapter: Domstolsverket "Sök rättspraxis" open data — FULL backfill.
+"""Source adapter: Domstolsverket "Sök rättspraxis" open data — the whole corpus.
 
-Unlike `domstolsverket.py` (keyword-bound, base-schema domain tables), this
-adapter pulls the **entire higher-court corpus UNFILTERED** into the bespoke
-`precedents` table. Legal-area classification happens later — never at ingest.
+Pulls the ENTIRE higher-court corpus unfiltered into `cases`. Legal-area classification
+happens later — never at ingest.
 
-Probed live (see canonical_id / pagination notes below), not assumed:
+Probed live, not assumed:
   * Search:   POST {base}/api/v1/sok   body {filter:{}, sidIndex, antalPerSida,
               sortorder:'publiceringstid', asc:true} -> {publiceringLista, total}.
-              An EMPTY filter returns every record the API exposes (all higher
-              courts: HD/HDO, HFD, the hovrätter, kammarrätter, AD/ADO, MÖD, PMÖD,
-              MIG…); total was 17258 at probe time. No court/keyword/area filter.
-  * Paging:   `sidIndex` is a 0-based PAGE index, `antalPerSida` the page size;
-              `total` is constant across pages. We sort publiceringstid ASC so the
-              page index is a STABLE resume cursor — new publications append at the
-              end (higher pages), leaving already-fetched pages put across days.
-  * PDFs:     records served as PDF carry bilagaLista:[{filnamn, fillagringId}]
-              and an empty `innehall`. Download with GET
-              {base}/api/v1/bilagor/{URL-ENCODED fillagringId}, Accept
-              application/pdf (the path id MUST be percent-encoded; raw slashes 404).
+              An EMPTY filter returns every record the API exposes (all higher courts);
+              filter.domstolKodLista narrows it to courts (court codes: HDO, not HD).
+  * Paging:   `sidIndex` is a 0-based PAGE index, `antalPerSida` the page size; `total` is
+              constant across pages. Sorting publiceringstid ASC keeps pages stable — new
+              publications append at the end.
+  * PDFs:     records served as PDF carry bilagaLista:[{filnamn, fillagringId}] and an empty
+              `innehall`. Download with GET {base}/api/v1/bilagor/{URL-ENCODED fillagringId},
+              Accept application/pdf (the path id MUST be percent-encoded; raw slashes 404).
   * Detail:   stable public web URL is {base}/sok/publicering/{id}.
-
-Two-phase by design: `probe()`, `iter_pages()` and `download_bilaga()` are the
-backfill surface; `normalize()` is source-shape -> precedents-row and is shared,
-so a future delta mode over the Sök-rättspraxis RSS feed can reuse it unchanged.
+  * Coverage: referat back to 1981, but domar och beslut only from 4 March 2025 — a property
+              of the source, not the pipeline.
 """
 from __future__ import annotations
 
@@ -32,6 +26,7 @@ from urllib.parse import quote
 
 import requests
 
+BASE_URL = "https://rattspraxis.etjanst.domstol.se"
 SEARCH_PATH = "/api/v1/sok"
 BILAGA_PATH = "/api/v1/bilagor/{lagring_id}"  # GET, Accept application/pdf
 DETAIL_PATH = "/sok/publicering/{id}"         # public SPA web URL
@@ -81,10 +76,9 @@ def _request(method: str, url: str, *, headers: dict, json=None,
     raise last_exc  # unreachable, but keeps type-checkers happy
 
 
-def _search_body(page: int, page_size: int) -> dict:
-    # filter:{} == unfiltered. asc -> stable page cursor (see module docstring).
+def _search_body(page: int, page_size: int, courts: list[str] | None = None) -> dict:
     return {
-        "filter": {},
+        "filter": {"domstolKodLista": courts} if courts else {},
         "sidIndex": page,
         "antalPerSida": page_size,
         "sortorder": SORT_ORDER,
@@ -92,74 +86,38 @@ def _search_body(page: int, page_size: int) -> dict:
     }
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Step 0 — probe
-# ──────────────────────────────────────────────────────────────────────────────
-def probe(source_config: dict) -> dict:
-    """Hit the API once and report the real total + response/pagination shape.
-
-    Returns a dict the caller logs before pulling. Inspects the actual response;
-    nothing here is assumed.
-    """
-    base_url = source_config["base_url"].rstrip("/")
-    page_size = int(source_config.get("page_size", 100))
-    resp = _request("POST", base_url + SEARCH_PATH, headers=_HEADERS,
-                    json=_search_body(0, 1))
-    data = resp.json()
-    pubs = data.get("publiceringLista") or []
-    total = data.get("total")
-    return {
-        "total": total,
-        "page_size": page_size,
-        "pages_to_fetch": (
-            (int(total) + page_size - 1) // page_size if isinstance(total, int) else None
-        ),
-        "response_keys": sorted(data.keys()) if isinstance(data, dict) else None,
-        "record_keys": sorted(pubs[0].keys()) if pubs else [],
-        "pagination": "POST /api/v1/sok; sidIndex=0-based page, antalPerSida=page size",
-    }
+def total(court: str | None = None) -> int:
+    """How many records the API exposes right now, optionally for one court code."""
+    resp = _request("POST", BASE_URL + SEARCH_PATH, headers=_HEADERS,
+                    json=_search_body(0, 1, [court] if court else None))
+    return int(resp.json()["total"])
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Backfill — resumable page iterator
-# ──────────────────────────────────────────────────────────────────────────────
-def iter_pages(source_config: dict, start_page: int = 0):
-    """Yield (page_index, raw_records, total) from `start_page` to the end.
-
-    A polite inter-request delay runs between pages. The caller persists
-    page_index after each page (ingestion_progress.last_cursor) for resume.
-    """
-    base_url = source_config["base_url"].rstrip("/")
-    page_size = int(source_config.get("page_size", 100))
-    delay = float(source_config.get("request_delay_seconds", 0.5))
-    url = base_url + SEARCH_PATH
-
-    page = start_page
+def iter_pages(page_size: int = 100, delay: float = 0.5):
+    """Yield (page_index, raw_records, total) over the whole corpus."""
+    url = BASE_URL + SEARCH_PATH
+    page = 0
     while True:
-        resp = _request("POST", url, headers=_HEADERS, json=_search_body(page, page_size))
-        data = resp.json()
+        data = _request("POST", url, headers=_HEADERS, json=_search_body(page, page_size)).json()
         pubs = data.get("publiceringLista") or []
-        total = data.get("total")
+        total_hits = data.get("total")
         if not pubs:
             break
-        yield page, pubs, total
+        yield page, pubs, total_hits
         page += 1
-        if len(pubs) < page_size:
-            break
-        if isinstance(total, int) and page * page_size >= total:
+        if len(pubs) < page_size or (isinstance(total_hits, int) and page * page_size >= total_hits):
             break
         time.sleep(delay)
 
 
-def download_bilaga(base_url: str, fillagring_id: str) -> bytes:
-    """Download one attachment (PDF) by its fillagringId. Bytes, with backoff."""
-    url = base_url.rstrip("/") + BILAGA_PATH.format(lagring_id=quote(fillagring_id, safe=""))
-    resp = _request("GET", url, headers={**_HEADERS, "Accept": "application/pdf"})
-    return resp.content
+def download_bilaga(fillagring_id: str) -> bytes:
+    """Download one attachment (PDF) by its fillagringId."""
+    url = BASE_URL + BILAGA_PATH.format(lagring_id=quote(fillagring_id, safe=""))
+    return _request("GET", url, headers={**_HEADERS, "Accept": "application/pdf"}).content
 
 
-def detail_url(base_url: str, record_id: str) -> str:
-    return base_url.rstrip("/") + DETAIL_PATH.format(id=record_id)
+def detail_url(source_id: str) -> str:
+    return BASE_URL + DETAIL_PATH.format(id=source_id)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -218,101 +176,51 @@ def _strip_html(s: str | None) -> str | None:
     return s.strip() or None
 
 
-def _doc_type(raw: dict, bilagor: list[dict]) -> str | None:
-    """Advisory doc_type from publiceringsform, refined dom/beslut via filename."""
-    form = (raw.get("publiceringsform") or "").upper()
-    if form == "REFERAT":
-        return "referat"
-    if form == "NOTIS":
-        return "notis"
-    if form == "DOM_ELLER_BESLUT":
-        names = " ".join((b.get("filnamn") or "") for b in bilagor).lower()
-        has_dom = "dom" in names
-        has_beslut = "beslut" in names
-        if has_dom and not has_beslut:
-            return "dom"
-        if has_beslut and not has_dom:
-            return "beslut"
-        return "dom_eller_beslut"
-    return form.lower() or None
-
-
 # ──────────────────────────────────────────────────────────────────────────────
-# normalize — source record → precedents row (shared by backfill & future delta)
+# normalize — source record → cases row
 # ──────────────────────────────────────────────────────────────────────────────
-def normalize(raw: dict, base_url: str) -> dict:
-    """Map one PubliceringDTO to a precedents-shaped dict.
+def normalize(raw: dict) -> dict:
+    """Map one PubliceringDTO to a `cases` row plus internal `_full_text` / `_bilagor`.
 
-    Sets only source/advisory fields. `area` and `embedding` are NEVER set here —
-    owned by classification / the embed phase, and must survive re-ingest. The
-    body is NOT a Postgres column: `_full_text` (inline HTML body for referat;
-    None for PDF-only) and `_bilagor` are internal — the orchestrator uploads the
-    text and any PDF originals to R2, sets full_text_path / raw_pdf_path, and
-    drops both before the DB write.
+    Only source fields are set: area, structural_tags, derived_tags and embedding belong to
+    classification, enrichment and the embed step, and must survive re-ingest. `raw_data`
+    is the record minus the `innehall` body — the body lives in R2 as extracted text and
+    the untouched record as raw.json, so Postgres stays a thin index.
     """
     domstol = raw.get("domstol") or {}
-    bilagor = [
-        {"filnamn": b.get("filnamn"), "fillagring_id": b.get("fillagringId")}
-        for b in (raw.get("bilagaLista") or [])
-        if b.get("fillagringId")
-    ]
-
-    # canonical_id: prefer the stable source document id (UUID); fall back to the
-    # group correlation id, then a court-scoped normalized reference.
     record_id = raw.get("id")
-    ref_norm = normalize_reference(raw)
-    canonical_id = (
+    reference = normalize_reference(raw)
+    # Prefer the stable source document id (UUID); fall back to the group correlation id,
+    # then a court-scoped reference. Must stay identical to v1's canonical_id.
+    source_id = (
         str(record_id) if record_id
-        else str(raw.get("gruppKorrelationsnummer")) if raw.get("gruppKorrelationsnummer")
-        else (f"{domstol.get('domstolKod') or 'NA'}:{ref_norm}" if ref_norm else None)
+        else str(raw["gruppKorrelationsnummer"]) if raw.get("gruppKorrelationsnummer")
+        else f"{domstol.get('domstolKod') or 'NA'}:{reference}" if reference
+        else None
     )
 
-    mal = raw.get("malNummerLista") or []
-    ad = raw.get("arbetsdomstolenDomsnummer")
-    malnummer_raw_parts = [str(x) for x in mal]
-    if ad:
-        malnummer_raw_parts.append(f"AD {ad}")
+    case_numbers = [_norm_malnummer(str(m)) for m in raw.get("malNummerLista") or []]
+    if raw.get("arbetsdomstolenDomsnummer"):
+        case_numbers.append(f"AD {_norm_ws(str(raw['arbetsdomstolenDomsnummer']))}")
 
-    ref_list = raw.get("referatNummerLista") or []
-    court_raw = domstol.get("domstolNamn")
-    title = _norm_ws(str(ref_list[0])) if ref_list else _norm_ws(
-        " ".join(p for p in [court_raw, ref_norm] if p)
-    ) or ref_norm or court_raw
-
-    pub = raw.get("publiceringstid")
-    rattsomrade = [x for x in (raw.get("rattsomradeLista") or []) if x]
+    referat = raw.get("referatNummerLista") or []
+    title = _norm_ws(str(referat[0])) if referat else _norm_ws(
+        " ".join(p for p in (domstol.get("domstolNamn"), reference) if p)
+    ) or None
 
     return {
-        "canonical_id": canonical_id,
+        "source_id": source_id,
         "court": domstol.get("domstolKod"),
-        "court_raw": court_raw,
-        "doc_type": _doc_type(raw, bilagor),
-        "malnummer_raw": "; ".join(malnummer_raw_parts) or None,
-        "malnummer_normalized": ref_norm,
+        "case_number": "; ".join(case_numbers) or None,
+        "title": title,
+        "summary": _strip_html(raw.get("sammanfattning")),
         "decision_date": raw.get("avgorandedatum") or None,
-        "publication_date": (pub[:10] if isinstance(pub, str) and pub else None),
-        # record_date is the base-schema date the research API orders/filters on.
-        "record_date": raw.get("avgorandedatum") or (pub[:10] if isinstance(pub, str) and pub else None),
-        "source_area_code": "; ".join(rattsomrade) or None,  # ADVISORY — never filter
-        "title": title or None,
-        "summary": _strip_html(raw.get("sammanfattning")),  # short headnote — kept in PG
-        "source_url": detail_url(base_url, str(record_id)) if record_id else None,
-        # raw_pdf_path / full_text_path are set by the orchestrator after R2 upload.
-        "metadata": {
-            "keywords": raw.get("nyckelordLista") or [],
-            "lagrum": raw.get("lagrumLista") or [],
-            "forarbeten": raw.get("forarbeteLista") or [],
-            "rattsomrade": rattsomrade,           # full source area list (advisory)
-            "referat_numbers": ref_list,
-            "typ": raw.get("typ"),                # PREJUDIKAT / VAGLEDANDE… (advisory)
-            "publiceringsform": raw.get("publiceringsform"),
-            "grupp_korrelationsnummer": raw.get("gruppKorrelationsnummer"),
-            "attachments": [b.get("filnamn") for b in (raw.get("bilagaLista") or [])],
-            # The full source envelope is intentionally NOT stored — the body lives
-            # in R2 (full_text_path) and the record is re-fetchable by canonical_id.
-            # Migration 003 has no raw_data/full_text column by design.
-        },
-        # internal — consumed by the orchestrator, dropped before the DB write:
-        "_full_text": _strip_html(raw.get("innehall")),  # inline body (referat); None for PDF-only
-        "_bilagor": bilagor,
+        "source_area_code": "; ".join(x for x in raw.get("rattsomradeLista") or [] if x) or None,
+        "raw_data": {k: v for k, v in raw.items() if k != "innehall"},
+        "_full_text": _strip_html(raw.get("innehall")),
+        "_bilagor": [
+            {"filnamn": b.get("filnamn"), "fillagring_id": b.get("fillagringId")}
+            for b in raw.get("bilagaLista") or []
+            if b.get("fillagringId")
+        ],
     }

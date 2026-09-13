@@ -12,6 +12,9 @@ venv/
 # OS
 .DS_Store
 
+# enrich.py batch state (ids of submitted Message Batches not yet collected)
+.batches/
+
 # Scratch (commit-message files, throwaway probes, agent temp batches)
 _commitmsg.txt
 _*.py

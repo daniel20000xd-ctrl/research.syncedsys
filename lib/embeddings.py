@@ -1,24 +1,25 @@
 """Local sentence-embedding model wrapper.
 
-Everything runs on a LOCAL model — no calls to any paid embedding API — to keep
-the subscription/API separation this repo enforces (see CLAUDE.md). The default
-is a Swedish-tuned 768-dim model whose width matches the `precedents.embedding
-vector(768)` column out of the box; both the model and the dimension are
-configurable from domains.yaml.
+Everything runs on a LOCAL model — no paid embedding API. The default is a Swedish-tuned
+768-dim model whose width matches the `cases.embedding vector(768)` column. The corpus
+(ingest.py embed), candidate windows (enrich.py) and MCP queries (mcp_server.py) must all use
+the same model, or similarity is meaningless.
 
-The heavy `sentence_transformers` import is deferred to `Embedder.load()` so the
-backfill / PDF phases (which don't embed) never need torch installed.
+The heavy `sentence_transformers` import is deferred to `Embedder.load()` so scripts that
+don't embed never import torch.
 
-Config (domains.yaml -> source_config.embeddings):
+Config (optional dict):
   model            HF model id (default 'KBLab/sentence-bert-swedish-cased', 768d)
   dimension        expected vector width; MUST equal the DB column (default 768)
   batch_size       encode batch size (default 32)
   device           'cpu' | 'cuda' | None (auto)
   passage_prefix   prepended to documents  (e5 models want 'passage: ')
-  query_prefix     prepended to seed phrases (e5 models want 'query: ')
+  query_prefix     prepended to queries    (e5 models want 'query: ')
   max_chars        truncate input text before encoding (default 8000)
 """
 from __future__ import annotations
+
+import sys
 
 DEFAULT_MODEL = "KBLab/sentence-bert-swedish-cased"
 DEFAULT_DIMENSION = 768
@@ -42,7 +43,8 @@ class Embedder:
             return
         from sentence_transformers import SentenceTransformer  # deferred (torch)
 
-        print(f"  loading embedding model '{self.model_name}' (device={self.device or 'auto'})...")
+        # stderr: the MCP server speaks its protocol over stdout.
+        print(f"  loading embedding model '{self.model_name}' (device={self.device or 'auto'})...", file=sys.stderr)
         self._model = SentenceTransformer(self.model_name, device=self.device)
         # method was renamed across sentence-transformers versions
         get_dim = getattr(self._model, "get_embedding_dimension", None) or \
@@ -52,7 +54,7 @@ class Embedder:
             raise ValueError(
                 f"Model '{self.model_name}' emits {got}-dim vectors but config/DB "
                 f"expect {self.dimension}. Set embeddings.dimension to {got} AND alter "
-                f"the precedents.embedding column to vector({got}) (rebuild the HNSW "
+                f"the cases.embedding column to vector({got}) (rebuild the HNSW "
                 f"index) so they match."
             )
 
@@ -69,11 +71,11 @@ class Embedder:
         return [v.tolist() for v in vecs]
 
     def embed_passages(self, texts: list[str]) -> list[list[float]]:
-        """Embed corpus documents (precedent text)."""
+        """Embed corpus documents (case text)."""
         return self._encode(texts, self.passage_prefix)
 
     def embed_queries(self, texts: list[str]) -> list[list[float]]:
-        """Embed seed phrases / queries used for similarity ranking."""
+        """Embed search queries and concept definitions."""
         return self._encode(texts, self.query_prefix)
 
 

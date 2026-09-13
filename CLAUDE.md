@@ -1,160 +1,88 @@
-# CLAUDE.md — syncedsys-pipeline
+# CLAUDE.md — research.syncedsys (case-law corpus v2)
 
-Phase 1 (ingest) of the Syncedsys research stack. A local Python CLI — no server, no
-scheduler, no model client. It pulls raw records from sources into per-domain tables in
-the dedicated `syncedsys-research` Supabase project and publishes per-domain tagging
-guidance to the `research_domains` registry.
-
-Phases 2 (structural tagging) and 3 (latent-concept connection) do **not** run here.
-They run in claude.ai through the research MCP, backed by the i.syncedsys read/write
-API. The `anthropic` dependency and the old `enrich.py` / `connect.py` / `lib/haiku.py`
-were removed in commit 6f0baa8 — do not resurrect them.
-
-## Commands
-
-```bash
-python ingest.py --domain <domain_key> [--limit N] [--dry-run]
-python status.py
-
-# Bespoke higher-court precedents corpus (NOT a base-schema domain — see below):
-python backfill_precedents.py --phase probe|backfill|embed|queue|all [--limit N] [--seed "…"] [--dry-run]
-```
-
-Run from the repo root (imports of `lib/` and `adapters/` are cwd-relative).
-Env lives in `.env.local` (template: `.env.example`):
-- `RESEARCH_SUPABASE_URL` + `RESEARCH_SUPABASE_SERVICE_KEY` — DML via supabase client
-- `RESEARCH_DATABASE_URL` + `RESEARCH_DB_PASSWORD` — DDL via psycopg2 (session pooler;
-  password passed separately so special characters survive)
-
-## Architecture
-
-- `domains.yaml` — single source of truth. One entry per domain: table name, source
-  adapter + config, `extra_columns`, and the Phase 2/3 guidance (`enrichment_context`,
-  `structural_tag_categories`) that gets published to the DB for Claude.
-- `lib/registry.py` — loads/validates domains.yaml. Required: display_name, table_name,
-  source_adapter, source_config, structural_tag_categories (`enrichment_context` is
-  optional in validation, though everything downstream expects it).
-- `lib/schema.py` — generates idempotent DDL: base schema (external_id/domain unique
-  key, raw_data, structural_tags, derived_tags, phase2_* state, phase3_concept_ids)
-  plus extra_columns, six indexes, updated_at trigger.
-- `lib/db.py` — supabase client (DML) + psycopg2 (DDL). `ensure_domain_table()` creates
-  the table, `NOTIFY pgrst` to reload the PostgREST schema cache, waits until the table
-  is visible, and upserts the domain row **including enrichment_context and
-  structural_tag_categories** into `research_domains`.
-- `adapters/<name>.py` — one per source type, each exposing
-  `fetch(source_config) -> list[dict]` returning base-schema-shaped records.
-  Current: `domstolsverket` (rättspraxis API), `manual` (local JSON array).
-- `ingest.py` — orchestrates: registry → ensure table → adapter fetch → diff against
-  existing external_ids → batch upserts (100/batch) → stamp `last_ingested_at`.
-- `migrations/` — foundation SQL, run **by hand** in the Supabase SQL editor (001 then
-  002). Creates `update_updated_at()`, `research_domains`, `concepts`; RLS enabled with
-  zero policies (service-key only; auth lives in the i.syncedsys proxy). `003` adds the
-  bespoke precedents corpus (below).
-
-## Higher-court precedents — bespoke pipeline (NOT a base-schema domain)
-
-One unfiltered domain (`higher_court_precedents`, marker `pipeline: precedents`) targeting
-the single `precedents` table from migration `003` — *not* the base schema, so it bypasses
-`ingest.py` / `schema.py` / `ensure_domain_table` entirely. `ingest.py` refuses it and points
-to `backfill_precedents.py`. Legal-area classification happens AFTER ingest (no per-area
-domains; no court/keyword/area filter at ingest).
-
-- `adapters/domstolsverket_precedents.py` — Domstolsverket "Sök rättspraxis" open data.
-  `probe()` (total + pagination), `iter_pages()` (resumable unfiltered pull),
-  `download_bilaga()` (PDF), `normalize()` (source → precedents row; shared with a future
-  RSS delta mode). UNFILTERED = empty `{"filter":{}}` on `POST /api/v1/sok`; `sidIndex`
-  (0-based page) + `antalPerSida`; sorted `publiceringstid` ASC so the page cursor is stable.
-- `lib/precedents.py` — orchestration: `backfill` (probe → page loop → **heavy content
-  to R2** (PDF originals + extracted text) → LEAN upsert on `canonical_id`, no body column →
-  cursor in `ingestion_progress`), `embed` (local model, rows where `embedding is null`,
-  **reading the body back from R2** by `full_text_path`), `populate_queue` (rank ALL
-  precedents by max cosine similarity to seeds → `classification_queue.priority`).
-- **Storage**: heavy content lives in R2, not Postgres — `raw_pdf_path` (original PDF) and
-  `full_text_path` (extracted text) are R2 keys; the DB row keeps only structured fields, a
-  short `summary`, the pointers and the `embedding`. Keeps the table ~embeddings+HNSW+short
-  fields (fits free-tier disk). R2 is REQUIRED.
-- **Classification access (migration 004)**: precedents IS registered in `research_domains`
-  and carries the base-schema tag/state columns (`structural_tags`, `derived_tags`,
-  `phase2_status`, `phase2_ran_at`, `phase3_concept_ids`, `record_date`), so the EXISTING
-  i.syncedsys research MCP/API/UI can search, enrich and connect it with **no code change /
-  deploy** — even though the table is built by this bespoke pipeline, not
-  ensure_domain_table. Division of labour: `embedding` + `classification_queue` are the
-  PRIORITY layer (what to classify first); `structural_tags`/`derived_tags`/`area` are the
-  RESULT (the groupings). `backfill` self-registers the domain via `_register_domain`; the
-  generic `ingest.py` still refuses it (its DDL is bespoke). Caveat: the routes `select('*')`,
-  so responses include the `embedding`/`fts` columns until i.syncedsys can be redeployed to
-  strip them (payload size only, non-breaking).
-- `lib/embeddings.py` — local `sentence-transformers` (default `KBLab/sentence-bert-swedish-cased`,
-  768d); model+dim configurable. `lib/pdf_text.py` — PyMuPDF. `lib/r2.py` — Cloudflare R2
-  (boto3; same env/bucket as the app's `lib/r2.ts`). `lib/db.get_pg_connection()` — shared
-  psycopg2 connection (embed/queue do pgvector writes + cosine ranking directly).
+Swedish higher-court corpus in the `syncedsys-research` Supabase project (ref `fjxhwxynrffpxchwxclo`),
+content in Cloudflare R2. Two verbs only: **enrich** (`enrich.py`) and **search** (`mcp_server.py`).
+Architecture spec: `syncedsys-architecture.md` (owner's document). v1 code is in `legacy-v1/` — do not
+extend it. See README.md for commands.
 
 ## Invariants — do not regress
 
-- Re-ingest never touches Phase 2/3 work: on the update path, `PIPELINE_STATE_KEYS`
-  (phase2_*, structural_tags, derived_tags, phase3_concept_ids, ingested_at) are popped
-  before upsert.
-- Dedup key is `UNIQUE (external_id, domain)`; upserts use
-  `on_conflict="external_id,domain"`.
-- Table names are always resolved from the `research_domains` registry, never from
-  caller/user input.
-- `raw_data` holds the complete original record and is never mutated.
-- **Precedents**: upsert is on `canonical_id` (the source UUID) and **never** writes
-  `area` (set by classification — the only trusted area field; `source_area_code` is
-  advisory, never filter on it) or `embedding` (set by the embed phase). `full_text_path` /
-  `raw_pdf_path` are COALESCE-preserved so a transient R2/PDF failure on re-run can't blank
-  a good pointer. Every precedent gets a `classification_queue` row — ranking orders the
-  work, it never drops a case (null-embedding rows get null priority, ranked last).
+- **All ingest upserts on `source_id`**, and a re-run over unchanged data must write 0 rows (the
+  `where ... is distinct from` clause in `ingest.py`). Never `DELETE FROM cases`; vanished source
+  records are reported only.
+- **`area` is set only by classification; `source_area_code` is never filterable.** It is absent from
+  every `mcp_*` view by construction — keep it that way when editing views.
+- **Postgres stays a thin index.** No full text in Postgres. `raw_data` = source record minus
+  `innehall` (storing the body once pushed this free-tier DB past 500 MB into read-only mode); the
+  untouched record is R2 `raw.json`. Current size ~0.4 GB of the 0.5 GB cap — check
+  `pg_database_size` before adding anything heavy.
+- **Concepts are immutable.** `pipeline` has table-level SELECT/INSERT/DELETE and column-level
+  UPDATE(key) only. A column-level REVOKE does nothing against a table-level grant, so never grant
+  table-level UPDATE on `concepts`. `postgres` (owner) can still edit — don't.
+- **`id` is the foreign key; `key` is a label.** Never reference a concept by key from data.
+- **Ledger honesty.** `out_of_candidate_window` means deliberately not read; `manual` rows are never
+  overwritten (upsert guard); `error`/`abstain` rows are queue state that the next pass overwrites.
+- **MCP server is read-only and four tools.** New needs become parameters, not tools; never add a
+  tool-discovery tool. Writes would go in a separate server.
+- Credentials only in `.env.local` (gitignored). Role passwords are set by `migrate.py`, never in SQL.
+
+## How enrichment works (details the code relies on)
+
+- Work query = cases with no ledger row, `error`, `abstain` below level 4, or (vector_llm)
+  `out_of_candidate_window` rows that fall inside the current window. `--depth` deepens the window
+  without mutating `candidate_depth`.
+- Level 0 sends `definition`; levels 1–3 send `prompt_template` verbatim, both after the fixed
+  `RULES` text in `enrich.py`. Levels 0–1 see headnote + metadata (court, case number, title, date,
+  `lagrumLista`, `nyckelordLista`); levels 2–3 add the R2 full text.
+- The model returns `probability_applies`, stored as the ledger's `confidence`. Never rename it back to
+  "confidence": Haiku read that as certainty in its verdict ("no_match, 0.95") and the first test run
+  escalated 141 of 150 clear rejections. 0.35–0.75, a verdict contradicting the probability,
+  or a match whose evidence isn't a verbatim quote (whitespace/quote-normalized) →
+  `abstain`; the reason goes in `error_message`. A level-3 abstention is stored at level 4 (review).
+- Structured outputs (`output_config.format`) on all three models; Opus 5 calls go through
+  `client.beta.messages` with `server-side-fallback-2026-07-01` + `fallbacks: "default"` (refusals).
+- `anthropic.Anthropic(max_retries=0)`: the runner retries itself so the spend-cap 429
+  (`error.details.error_code == enforced_spend_limit_reached`, no retry-after) aborts instead of
+  retrying. A Console-set spend limit is a 400 "You have reached your specified…" — also aborts.
+- Concurrency ramps from 2 to 16 over ~2 minutes (acceleration limits) and pauses when any
+  `anthropic-ratelimit-*-remaining` drops below 10%.
+- `derived_tags` = matched concept ids, rebuilt from the ledger at the end of each run.
+- Sweeps and `--batch` send level-0 reads through the Message Batches API; escalations stay
+  synchronous. Submitted batch ids live in `.batches/<concept_id>.json` (gitignored) so an
+  interrupted run collects the results instead of paying twice — never delete it while a batch is pending.
+- The window-edge hint is a heuristic, not proof: on `kringgaende_av_laglott`, depth 300 showed 0
+  matches among its last 50 candidates while RH 2008:47 — a case the concept's own examples call a
+  match — sat at rank 313. When a lexical signal exists (e.g. statute references in
+  `raw_data->'lagrumLista'`), cross-check the window against it before trusting its depth.
 
 ## Gotchas
 
-- **Domain tables need RLS (fixed in `lib/schema.py`, 2026-06-17).** The generated DDL now
-  emits `ALTER TABLE … ENABLE ROW LEVEL SECURITY` for every domain table. Without it the
-  table is publicly readable/writable via the project URL (Supabase `rls_disabled_in_public`)
-  — `arv_testamente` was exposed exactly this way. RLS is re-asserted on every ingest
-  (idempotent); never remove it. New domains are secured at creation.
-- **This repo is a local CLI — NOT deployed.** It's connected to a Vercel project
-  (`research.syncedsys`, under the kianmoradpour scope) that fails every push with "No python
-  entrypoint." `vercel.json` (`git.deploymentEnabled.main = false`) disables auto-deploy. Don't
-  add a web entrypoint expecting it to serve; Phase 2/3 + the API live in i.syncedsys.
-
-- **Migrations are manual.** Nothing in this repo executes `migrations/`. The header
-  comment in 002 claiming the pipeline applies it automatically is wrong — if 002 hasn't
-  been run, the first ingest fails at the `research_domains` upsert (missing columns).
-- **`CREATE TABLE IF NOT EXISTS` does not add columns.** Adding `extra_columns` to a
-  domain whose table already exists requires a manual `ALTER TABLE`; only the indexes
-  propagate on re-ingest.
-- **Domstolsverket adapter is tightly coupled to the API shape**: hardcoded
-  `POST /api/v1/sok`; request fields `filter.sokordLista`, `filter.domstolKodLista`,
-  `sidIndex` (0-based), `antalPerSida`, `sortorder: "publiceringstid"`, `asc`; response
-  `{ total, publiceringLista }`; record fields id/gruppKorrelationsnummer,
-  domstol.domstolKod/domstolNamn, malNummerLista, referatNummerLista, benamning,
-  sammanfattning (HTML, stripped), avgorandedatum, lagrumLista, nyckelordLista. Any
-  rename upstream breaks it. No retry/backoff — one HTTP error aborts the run (safe to
-  re-run; ingest is idempotent).
-- **Recall is keyword-bound**: only cases tagged with one of the `search_queries`
-  keywords are ever fetched (`sokordLista`, assumed OR logic). Court code is `HDO`, not
-  `HD`. `source_url` is always NULL (the API has no stable public web URLs).
-- `--limit` truncates **after** the full API fetch; `--dry-run` skips the DB entirely,
-  so every record prints as "new" and the live API is still hit.
-- `status.py` counts only done/pending; `phase2_status='error'` rows are invisible
-  there. `last_enriched_at`/`last_connected_at` are displayed here but must be stamped
-  by the Phase 2/3 side (i.syncedsys MCP) — this repo only writes `last_ingested_at`.
-- **Precedents PDF endpoint**: `GET /api/v1/bilagor/{fillagringId}` with the id
-  **URL-encoded** (raw slashes 404) and `Accept: application/pdf` (it's `bilagor` plural —
-  `/bilaga/` 404s). Discovered by reverse-engineering the SPA bundle under `/sok/`, not
-  documented. Detail web URL is `/sok/publicering/{id}`.
-- **Precedents embed/queue need the direct DB connection** (`RESEARCH_DATABASE_URL` +
-  `RESEARCH_DB_PASSWORD`) for pgvector writes and `<=>` cosine ranking — the service-key
-  PostgREST path can't express them. The embedding model is **local** (no paid API);
-  its dimension MUST equal the `precedents.embedding vector(N)` column (768) or `Embedder`
-  raises — to change it, alter the column + rebuild the HNSW index (migration `003`).
-- **Precedents R2 is REQUIRED**: heavy content (PDF originals + extracted text) is stored
-  in R2, so `CF_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` must be set — the
-  backfill and embed phases abort without them. Free-tier disk note: Postgres holds no body
-  text, so the table fits ~250 MB; storing the body in PG (as the original 003 did) blew
-  past the free-tier 500 MB cap and flipped the DB read-only.
-- Stale pre-MCP comments still reference Haiku/enrich.py/connect.py:
-  `domains.yaml:9`, `domains.yaml:78`, `status.py:59`, comment blocks in
-  `migrations/001` (lines 69, 75, 109, 115), plus orphaned `.pyc` files in
-  `__pycache__/`. Harmless but misleading — clean up opportunistically.
+- **Connections:** only the session pooler works (`aws-0-eu-west-1.pooler.supabase.com:5432`); the
+  direct `db.<ref>` host is IPv6-only. Custom roles log in as `<role>.<project-ref>` (`lib/db.py`).
+- **Free-tier pause:** after ~a week idle the project pauses: pooler says `tenant/user ... not found`
+  and PostgREST returns 502. Restore in the Supabase dashboard (possible for 90 days).
+- **Supabase default privileges** grant every new table and view to `anon`/`authenticated`; RLS
+  protects tables but NOT views. Any new view needs `revoke all ... from anon, authenticated`.
+- **pgvector HNSW** returns at most `hnsw.ef_search` rows (default 40): set `ef_search` and
+  `iterative_scan` before ANN queries with large limits or filters (done in `enrich.py` and the server).
+- **Embeddings:** local `KBLab/sentence-bert-swedish-cased` (768d, max 384 tokens, so effectively
+  summary + title + start of body). Query and corpus must use the same model; that is why the MCP
+  server is local stdio rather than on Vercel.
+- **MCP SDK v2** (`mcp>=2.2`): `from mcp.server import MCPServer`; raise
+  `mcp.server.mcpserver.exceptions.ToolError` for messages the model should see — any other
+  exception reaches the client only as "Error executing tool <name>". Nothing may print to stdout.
+- **Anthropic SDK 1.x** (httpx2): raw headers via `.with_raw_response`, `.parse()` for the message.
+- **Background runs:** stdout redirected to a file is block-buffered — progress lines appear only at
+  exit. Watch the database instead (`select count(*) from cases`).
+- **Domstolsverket API:** `POST /api/v1/sok`, 0-based `sidIndex`, court codes like `HDO` (not `HD`);
+  PDFs at `GET /api/v1/bilagor/{URL-encoded fillagringId}` (plural `bilagor`). Rename upstream = breakage.
+- The Grep tool skips gitignored paths (`.venv/`); grep the installed SDKs with Bash.
+- Pending owner decisions: dropping the v1 tables (`precedents`, `classification_queue`,
+  `research_domains`, `arv_testamente`, `ingestion_progress`, `legacy_v1_concepts`, ~190 MB), the hub
+  `library_items` legal_case copies, and the i.syncedsys research routes/pages that read v1 tables.
+  Area classification for cases added after v1 has no v2 runner yet.
+- **111 v1 precedents are not in `cases`** because their source ids no longer exist at Domstolsverket
+  (95 of them classified): 15 were republished under a new id with the same case number, 11 were
+  duplicate publications of a decision that did carry over, ~85 post-2025 HD judgment records have no
+  match (likely superseded by a referat). Their classifications live only in `precedents` — decide
+  before dropping it.

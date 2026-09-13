@@ -1,0 +1,53 @@
+# Förstärkt laglottsskydd: bröstarvinges skydd mot arvlåtarens åtgärder under livstiden (7 kap. 4 § ÄB).
+# Immutable once run — revise by copying to kringgaende_av_laglott_2.yaml.
+strategy: vector_llm
+candidate_depth: 150
+exemplars:
+  - 981aefb5-493f-4771-a9e1-435b6d745e5d  # NJA 1998 s. 534 — gåva till syftet likställd med testamente
+  - c854007b-7744-45bd-92ae-1767c20ab8ed  # NJA 1985 s. 414 — äktenskapsförord och bodelningar i serie
+  - bf84edba-b358-43c6-9fa3-05422f33f79c  # NJA 2022 s. 277 — gåva med uttalad avsikt att göra bröstarvinge arvlös
+definition: |
+  Matcha mål där en bröstarvinges laglottsskydd mot arvlåtarens åtgärder under livstiden prövas, dvs.
+  det förstärkta laglottsskyddet i 7 kap. 4 § ärvdabalken: om en gåva, bodelning, ett äktenskapsförord
+  eller ett liknande förfogande (eller en serie sådana) till sitt syfte ska likställas med testamente och
+  återbäras – inklusive processuella frågor i en sådan återbäringstalan, till exempel talefristen.
+  Matcha inte mål som rör laglott på annat sätt (jämkning av testamente enligt 7 kap. 3 §, beräkning av
+  laglott, förskott på arv) eller en annan lags 7 kap. 4 §.
+prompt_template: |
+  Konceptet är kringgående av laglott genom åtgärder under livstiden: det förstärkta laglottsskyddet i
+  7 kap. 4 § ärvdabalken.
+
+  Matcha när domstolen prövar – i sak eller som förutsättning för en processuell fråga – om en
+  rättshandling som arvlåtaren företog under sin livstid ska likställas med testamente eller återbäras
+  därför att den kränker en bröstarvinges laglott. Typiska rättshandlingar är gåva (även delvis
+  vederlagsfri överlåtelse), bodelning under bestående äktenskap, äktenskapsförord och flera sådana
+  åtgärder som tillsammans för egendom ut ur kvarlåtenskapen.
+
+  Räknas som match
+  - Prövning av om en gåva har skett under sådana omständigheter eller på sådana villkor att den till
+    sitt syfte är att likställa med testamente, oavsett utgång.
+  - Prövning av om bodelningar eller äktenskapsförord, var för sig eller tillsammans, har använts för att
+    föra över egendom så att laglotten kränks.
+  - Processuella avgöranden i en återbäringstalan enligt 7 kap. 4 § – till exempel talefristen,
+    återställande av försutten tid eller om ett yrkande stöder sig på samma grund – eftersom målet gäller
+    just detta laglottsskydd.
+
+  Räknas inte som match
+  - Mål som bara nämner laglott eller arv utan att någon livstidsåtgärd angrips: jämkning av testamente
+    enligt 7 kap. 3 §, beräkning av laglott, klander av testamente, arvskifte, boutredning.
+  - Förskott på arv (6 kap. ärvdabalken) när inget kringgående av laglott görs gällande.
+  - Bestämmelser med samma paragrafnummer i andra lagar, till exempel 7 kap. 4 § fastighetsbildningslagen,
+    brottsbalken eller föräldrabalken.
+  - Skatterättslig bedömning av gåva eller arv.
+
+  Gränsfall
+  - Om materialet bara visar att en talan om laglott förs, men inte om den riktar sig mot en
+    livstidsåtgärd, är svaret uncertain.
+
+  Exempel
+  - "Fråga huruvida gåva till syftet är att likställa med testamente. 7 kap 4 § ÄB." – match.
+  - "En bodelning under bestående äktenskap har bedömts som en gåva jämställd med testamente" – match.
+  - "Frist för väckande av talan enligt 7 kap. 4 § andra stycket ärvdabalken om laglottskränkning har inte
+    ansetts kunna bli föremål för återställande av försutten tid." – match (processuellt, men inom
+    återbäringstalan).
+  - "Ändring av servitut genom 7 kap. 4 § andra stycket FBL." – no_match (annan lag).
