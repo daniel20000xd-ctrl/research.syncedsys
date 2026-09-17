@@ -29,8 +29,10 @@ deeper); database 389 MB of the 500 MB free-tier cap.
 4. If the corpus may be stale: `python ingest.py verify` (exit 1 = the source has cases the database
    lacks), then `python ingest.py backfill` (~15 min) and `python ingest.py embed`. Do this before creating a
    vector_llm concept — a case without an embedding can't enter a candidate window.
-5. Each concept adds one ledger row per case (~3 MB). Keep
-   `select pg_size_pretty(pg_database_size(current_database()))` well under 500 MB.
+5. Each concept adds one ledger row per case (~170 bytes measured on 2026-09-17: `concept_evaluations`
+   was 23 MB across 8 concepts × 17,356 cases). Keep
+   `select pg_size_pretty(pg_database_size(current_database()))` well under 500 MB — `cases` (embeddings +
+   their HNSW index) and, until dropped, legacy `precedents` are the real space, not the ledger.
 
 ### 2. Write `concepts/<key>.yaml`
 
