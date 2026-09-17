@@ -1,0 +1,47 @@
+# Skatteförmågeprincipen: skattebördan ska fördelas efter den skattskyldiges ekonomiska bärkraft.
+# Immutable once run — revise by copying to skatteformageprincipen_2.yaml.
+strategy: vector_llm
+candidate_depth: 200
+exemplars: []
+definition: |
+  Matcha mål där domstolen resonerar om att skatteuttaget bör stå i proportion till den skattskyldiges
+  ekonomiska bärkraft (skatteförmågeprincipen) – horisontell rättvisa (lika inkomst ska beskattas lika,
+  oavsett källa) eller vertikal rättvisa (den som har större förmåga att betala bör bära en större andel).
+  Typiskt i mål om befrielse/eftergift från skattetillägg där sjukdom, låg inkomst eller andra personliga
+  och ekonomiska förhållanden vägs in, eller i tolkning av regler som grundavdrag och jobbskatteavdrag.
+  Matcha inte mål som bara tillämpar en skatteregel utan att domstolen argumenterar utifrån
+  betalningsförmåga eller skälighet i förhållande till den skattskyldiges ekonomi.
+prompt_template: |
+  Konceptet är skatteförmågeprincipen: skattebördan ska fördelas efter den skattskyldiges ekonomiska
+  bärkraft, inte efter en fast klumpsumma per person. Den har två sidor – horisontell rättvisa (lika
+  inkomst ska beskattas lika oavsett källa) och vertikal rättvisa (större förmåga att betala ska ge en
+  större andel). Principen är rättspolitisk och tillämpas sällan direkt av domstol, eftersom
+  legalitetsprincipen väger tyngre – men den syns i skälighetsbedömningar och i motiv till lagstiftning.
+
+  Räknas som match
+  - Mål om befrielse/eftergift från skattetillägg (skatteförfarandelagen) där domstolen väger in den
+    skattskyldiges sjukdom, låga inkomst eller andra personliga och ekonomiska förhållanden för att
+    bedöma om fullt skattetillägg är oskäligt.
+  - Resonemang om proportion mellan skatteuttag och betalningsförmåga, t.ex. vid tolkning av
+    grundavdrag, jobbskatteavdrag eller brutna skiktgränser, där domstolen uttryckligen kopplar
+    tolkningen till skatteförmåga eller skälighet utifrån ekonomisk bärkraft.
+  - Diskussion om horisontell rättvisa (lika inkomst från olika källor bör beskattas lika) som grund för
+    en tolkning.
+
+  Räknas inte som match
+  - Ren mekanisk tillämpning av grundavdrag, jobbskatteavdrag eller skiktgränser utan att domstolen
+    argumenterar utifrån betalningsförmåga.
+  - Skattetilläggsmål som avgörs på rent formella grunder (t.ex. preskription, delgivning) utan
+    skälighetsbedömning av den skattskyldiges ekonomi.
+  - Allmänna uttalanden om skatterättvisa i förarbeten som bara återges utan att domstolen själv bygger
+    sin bedömning på dem.
+
+  Gränsfall
+  - Om domstolen nämner "skälighet" eller "personliga förhållanden" utan att det klart handlar om
+    ekonomisk bärkraft (t.ex. rent processuella skälighetsbedömningar) är svaret uncertain.
+
+  Exempel
+  - "Fråga om befrielse från skattetillägg när den skattskyldiges sjukdom och låga inkomst gjort det
+    oskäligt att ta ut fullt tillägg." – match.
+  - "Tolkning av grundavdragets storlek utifrån den skattskyldiges ekonomiska bärkraft." – match.
+  - "Beräkning av skattetillägg enligt schablon utan skälighetsprövning." – no_match.

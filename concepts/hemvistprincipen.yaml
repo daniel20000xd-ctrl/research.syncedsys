@@ -1,0 +1,45 @@
+# Hemvistprincipen: beskattningsanspråk grundas på den skattskyldiges hemvist (obegränsad
+# skattskyldighet, beskattning av världsinkomst). Motsatsen är källstatsprincipen (se
+# kallstatsprincipen.yaml) — de två prövas ofta i samma mål men är separata koncept här.
+# Immutable once run — revise by copying to hemvistprincipen_2.yaml.
+strategy: vector_llm
+candidate_depth: 200
+exemplars: []
+definition: |
+  Matcha mål där domstolen prövar om den skattskyldige har hemvist i Sverige och därmed är obegränsat
+  skattskyldig för sin världsinkomst (hemvistprincipen). För fysiska personer: bosättning, stadigvarande
+  vistelse (i praxis mer än sex månader) eller väsentlig anknytning till Sverige (3 kap. 3 och 7 §§ IL –
+  familj, bostad, ekonomiskt engagemang), typiskt i utflyttningsmål. För juridiska personer: 6 kap. IL,
+  obegränsad skattskyldighet genom att vara bildad enligt svensk associationsrätt. I skatteavtal:
+  tie-breaker-regler i OECD:s modellavtal artikel 4 (fast bostad, centrum för levnadsintressena,
+  stadigvarande vistelse, medborgarskap) vid dubbel bosättning. Matcha inte mål som enbart gäller
+  begränsad skattskyldighet eller källbeskattning utan att hemvistfrågan prövas.
+prompt_template: |
+  Konceptet är hemvistprincipen: beskattningsrätten grundas på var den skattskyldige har sin hemvist,
+  vilket ger obegränsad skattskyldighet, dvs. beskattning av världsinkomst – till skillnad från
+  källstatsprincipen, som grundar beskattningsrätten på var inkomsten uppstått.
+
+  Räknas som match
+  - Utflyttningsmål där tvisten gäller om väsentlig anknytning till Sverige kvarstår efter en flytt
+    utomlands (prövning av kvarvarande bostad, familj eller näringsverksamhet, 3 kap. 7 § IL).
+  - Prövning av om stadigvarande vistelse i Sverige (i praxis mer än sex månader) medför obegränsad
+    skattskyldighet.
+  - Prövning av om en juridisk person är obegränsat skattskyldig genom att vara bildad enligt svensk
+    associationsrätt (6 kap. IL).
+  - Tolkning av hemvistartikeln (t.ex. artikel 4) i ett skatteavtal vid dubbel bosättning, inklusive
+    tie-breaker-regler som fast bostad eller centrum för levnadsintressena.
+
+  Räknas inte som match
+  - Mål som enbart gäller begränsat skattskyldigas källbeskattning (t.ex. SINK) eller fast driftställe,
+    utan att hemvistfrågan är i fråga (se kallstatsprincipen).
+  - Mål där hemvist är ostridig och tvisten gäller något annat, t.ex. inkomstberäkningen.
+
+  Gränsfall
+  - Om målet prövar både hemvist och källbeskattning tillsammans, matcha ändå om hemvistfrågan
+    (väsentlig anknytning, stadigvarande vistelse, dubbel bosättning) uttryckligen prövas – även om
+    källstatsfrågan också matchar kallstatsprincipen separat.
+
+  Exempel
+  - "Fråga om väsentlig anknytning till Sverige kvarstått efter utflyttning till Spanien." – match.
+  - "Tillämpning av tie-breaker-regeln i skatteavtalets hemvistartikel vid dubbel bosättning." – match.
+  - "Fråga om fast driftställe förelegat i Sverige för ett utländskt bolag." – no_match (källstat).

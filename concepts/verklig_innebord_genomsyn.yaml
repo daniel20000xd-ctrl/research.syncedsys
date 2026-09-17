@@ -1,0 +1,50 @@
+# Principen om rättshandlingens verkliga innebörd ("genomsyn"): beskattning följer vad parterna
+# civilrättsligt verkligen gjort och avsett, inte bara den beteckning de valt. Skilt från skatteflyktslagen.
+# Immutable once run — revise by copying to verklig_innebord_genomsyn_2.yaml.
+strategy: vector_llm
+candidate_depth: 200
+exemplars:
+  - d57ae4db-729c-4277-b350-0802d8ebedb7  # RÅ 2004 ref. 27 — nyckelavgörande om verklig innebörd/genomsyn utan skatteflyktslagen
+definition: |
+  Matcha mål där domstolen prövar rättshandlingens verkliga innebörd ("genomsyn"): om beskattning ska
+  grundas på vad parterna civilrättsligt verkligen gjort och avsett snarare än den beteckning de valt
+  (t.ex. en lönebetalning kallad "lån", ett köp kallat "gåva"), inklusive prövning av skentransaktion.
+  Detta är skilt från en prövning enligt skatteflyktslagen (1995:575), som är ett separat lagreglerat
+  fyrarekvisit-test (skatteförmån, medverkan, huvudsakligt skäl, strider mot lagstiftningens syfte) –
+  matcha ändå mål som prövar verklig innebörd först och skatteflyktslagen i andra hand. Matcha inte mål
+  som enbart tillämpar skatteflyktslagen utan att först pröva rättshandlingens verkliga innebörd.
+prompt_template: |
+  Konceptet är principen om rättshandlingens verkliga innebörd ("genomsyn"): beskattning ska i vissa
+  fall grunda sig på rättshandlingens verkliga ekonomiska/civilrättsliga innebörd snarare än enbart dess
+  formella beteckning, för att motverka konstlade upplägg. Efter RÅ 2004 ref. 27 är den vedertagna
+  terminologin snarare "rättshandlingens verkliga innebörd" än "genomsyn", men termen genomsyn används
+  fortfarande i doktrin.
+
+  Räknas som match
+  - Prövning av om en rättshandling (t.ex. gåva, lån, köp, avtal) civilrättsligt verkligen har den
+    innebörd parterna påstår, eller om den ska omklassificeras utifrån vad som faktiskt avsetts och
+    gjorts.
+  - Prövning av om en rättshandling utgör en skentransaktion.
+  - Mål som formulerar frågan i termer av "rättshandlingens verkliga innebörd", "vad parterna avsett
+    och faktiskt gjort" eller motsvarande.
+  - Mål som först prövar verklig innebörd och därefter, i andra hand, skatteflyktslagen (1995:575) –
+    en stark signal att målet hör hit.
+
+  Räknas inte som match
+  - Mål som enbart prövar skatteflyktslagens fyra rekvisit (skatteförmån, medverkan, huvudsakligt skäl,
+    lagstiftningens syfte) utan att först eller alls pröva rättshandlingens verkliga innebörd.
+  - Ren avtalstolkning utan skatterättslig fråga om omklassificering.
+  - Bevisvärdering av vad som hänt i sak utan att frågan är om beskattningen ska följa en annan
+    innebörd än den formella beteckningen.
+
+  Gränsfall
+  - Om domstolen tolkar ett avtals innehåll men det är oklart om detta är en skatterättslig prövning av
+    verklig innebörd eller bara civilrättslig avtalstolkning utan skattekonsekvens i fråga, är svaret
+    uncertain.
+
+  Exempel
+  - "Fråga om en rättshandling till sin verkliga innebörd utgjort lön och inte lån, och skatteflyktslagen
+    inte varit tillämplig eller prövats i andra hand." – match.
+  - "Prövning enligt skatteflyktslagens fyra rekvisit av ett upplägg vars civilrättsliga innebörd inte
+    ifrågasatts." – no_match.
+  - "Fråga om ett avtal ska tolkas som hyra eller nyttjanderätt, utan skatterättslig fråga." – no_match.

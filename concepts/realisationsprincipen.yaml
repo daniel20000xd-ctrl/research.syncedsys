@@ -1,0 +1,43 @@
+# Realisationsprincipen: beskattning knyts till avyttring/byte, inte till löpande värdeförändring.
+# Immutable once run — revise by copying to realisationsprincipen_2.yaml.
+strategy: vector_llm
+candidate_depth: 200
+exemplars: []
+definition: |
+  Matcha mål där det är i fråga om, eller när, en avyttring (försäljning, byte eller därmed jämförlig
+  överlåtelse, 44 kap. IL) skett och därmed utlöst kapitalvinstbeskattning – realisationsprincipen, dvs.
+  att orealiserade värdeökningar inte beskattas löpande. Typiskt vid optioner, terminer och andra
+  derivat, ombildningar där äganderättsövergången är oklar, samt utflyttningsbeskattning/exitskatt
+  (10-årsregeln, 3 kap. 19 § IL) och dess förhållande till EU:s fria rörlighet. Matcha inte mål om
+  löpande beskattning av lagertillgångar eller värdepappersrörelse där avvikelsen från
+  realisationsprincipen är ostridig, och inte allmänna kapitalvinstberäkningar där avyttringstidpunkten
+  inte är tvistig.
+prompt_template: |
+  Konceptet är realisationsprincipen: beskattning knyts till en konkret transaktion (avyttring, byte
+  eller motsvarande) – inte till en löpande värdeförändring på pappret. Så länge en tillgång bara stiger
+  i värde uppstår ingen skattepliktig inkomst; skatteutlösande händelse är avyttringen (44 kap. IL).
+
+  Räknas som match
+  - Tvist om huruvida en avyttring överhuvudtaget har skett, t.ex. vid optioner, terminer eller andra
+    derivat, eller vid ombildningar där det är oklart om äganderätten verkligen bytt ägare.
+  - Mål om tidpunkten för avyttring och därmed när kapitalvinstbeskattning ska ske.
+  - Mål om utflyttningsbeskattning/exitskatt och 10-årsregeln (3 kap. 19 § IL) – Sveriges rätt att
+    beskatta latenta, orealiserade vinster på svenska andelar efter utflyttning – inklusive prövning
+    mot EU:s fria rörlighet.
+  - Resonemang om varför en löpande värdeökning (utan avyttring) inte ska beskattas.
+
+  Räknas inte som match
+  - Löpande beskattning av lagertillgångar till verkligt värde eller värdepappersrörelse, när avvikelsen
+    från huvudregeln inte är i sig tvistig utan bara tillämpas.
+  - Ren beräkning av kapitalvinstens storlek när avyttringstidpunkten är ostridig.
+  - Mål om andra skatteregler som råkar nämna en försäljning utan att avyttringstidpunkten eller
+    realisationskravet är den tvistiga frågan.
+
+  Gränsfall
+  - Om målet gäller värdering av en tillgång men det är oklart om frågan är kopplad till om/när en
+    avyttring skett, är svaret uncertain.
+
+  Exempel
+  - "Fråga om optioner ansetts avyttrade och kapitalvinstbeskattning därmed utlösts." – match.
+  - "Tillämpning av 3 kap. 19 § IL på orealiserad vinst efter utflyttning till annat EU-land." – match.
+  - "Beräkning av kapitalvinstens storlek vid en ostridigt genomförd fastighetsförsäljning." – no_match.

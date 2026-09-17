@@ -1,0 +1,45 @@
+# Reciprocitets-/symmetriprincipen i skatterätten: avdragsgill utgift hos en part ska motsvaras av
+# skattepliktig inkomst hos mottagaren, och vice versa. Skatterättslig – inte civilrättens reciprocitet.
+# Immutable once run — revise by copying to reciprocitets_symmetriprincipen_skatteratt_2.yaml.
+strategy: vector_llm
+candidate_depth: 200
+exemplars: []
+definition: |
+  Matcha mål där domstolen prövar om avdragsrätt för en utgift ska vägras eller medges med hänvisning
+  till om motsvarande inkomst beskattas (eller inte beskattas) hos mottagaren – reciprocitets-/
+  symmetriprincipen i skatterätten. Typiskt i ränteavdragsbegränsningar (24 kap. IL) vid lån inom
+  intressegemenskap, näringsbetingade andelar (25 a kap. IL, skattefri kapitalvinst mot ej avdragsgill
+  förlust), gränsöverskridande fall, lågskatteländer och hybrida missmatchningar. Matcha inte allmänna
+  avdragstvister som inte resonerar om motsvarande beskattning hos motparten, och inte civilrättslig
+  reciprocitet (t.ex. ömsesidiga avtalsförpliktelser).
+prompt_template: |
+  Konceptet är reciprocitets-/symmetriprincipen i skatterätten: systemet ska vara "slutet" – en
+  avdragsgill utgift hos den ena parten ska motsvaras av en skattepliktig inkomst hos mottagaren, för
+  att undvika dels dubbel icke-beskattning, dels oavsedd dubbelbeskattning.
+
+  Räknas som match
+  - Mål om ränteavdragsbegränsning för lån mellan intressegemenskapsföretag (24 kap. IL) där
+    avdragsrätten prövas mot om mottagaren beskattas för motsvarande ränteinkomst med viss lägsta nivå.
+  - Mål om näringsbetingade andelar (25 a kap. IL) där sambandet mellan skattefri kapitalvinst och
+    ej avdragsgill kapitalförlust är i fråga.
+  - Mål där avdrag nekas eller inkomst anses skattefri med uttrycklig hänvisning till om motsvarande
+    post beskattas (eller inte beskattas) hos motparten, särskilt vid gränsöverskridande transaktioner,
+    lågskatteländer, hybrida missmatchningar, BEPS/ATAD-implementering eller närståendetransaktioner.
+
+  Räknas inte som match
+  - Vanliga avdragstvister (t.ex. om en utgift är driftskostnad) som inte resonerar om motsvarande
+    beskattning hos mottagaren.
+  - Civilrättslig reciprocitet, t.ex. ömsesidighet i avtalsförpliktelser, utan skatterättslig koppling.
+  - Mål som bara i förbigående nämner att en motpart beskattas, utan att avdragsrätten eller
+    skattefriheten prövas mot detta.
+
+  Gränsfall
+  - Om domstolen diskuterar symmetri mellan avdrag och beskattning men det är oklart om det är
+    ratio decidendi eller ett sidoargument, är svaret uncertain.
+
+  Exempel
+  - "Ränteavdrag har nekats då motsvarande ränteinkomst inte beskattats hos det mottagande bolaget i
+    intressegemenskapen." – match.
+  - "Kapitalförlust på näringsbetingad andel har inte ansetts avdragsgill, i linje med att motsvarande
+    kapitalvinst är skattefri." – match.
+  - "Avdrag för representation har nekats på grund av bristande utredning om ändamålet." – no_match.

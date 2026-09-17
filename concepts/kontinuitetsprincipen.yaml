@@ -1,0 +1,58 @@
+# Kontinuitetsprincipen: vid kvalificerade ombildningar övertar förvärvaren överlåtarens skattemässiga
+# värden så att beskattningen skjuts upp, inte utlöses.
+# Immutable once run — revise by copying to kontinuitetsprincipen_2.yaml.
+strategy: vector_llm
+candidate_depth: 200
+exemplars:
+  - 2d80a316-1751-49ed-b7cd-e7169c033901  # HFD 2019 ref. 7 — kontinuitet vid kvalificerad fusion vs. privatbostadsföretag
+  - daa45c42-62a5-4798-b18b-50123bbcd89f  # RÅ 2004 ref. 1 — Sipano II, plenum, utdelningsbeskattning vid underprisöverlåtelse
+definition: |
+  Matcha mål där domstolen prövar kontinuitetsprincipen: att beskattningen vid en kvalificerad
+  ombildning eller överlåtelse inte utlöses vid transaktionstillfället utan skjuts upp, genom att det
+  övertagande företaget inträder i det överlåtande företagets skattemässiga situation. Central
+  lagstiftning: fusioner/fissioner (37 kap. IL), underprisöverlåtelser (23 kap. IL),
+  verksamhetsavyttringar (38 kap. IL), andelsbyten/framskjuten beskattning (48 a kap. IL). Nyckelfraser:
+  "inträder i det överlåtande företagets skattemässiga situation", "skattemässig kontinuitet",
+  "kvalificerad fusion/fission/underprisöverlåtelse", "uppskjuten beskattning". Matcha inte mål om
+  befrielse eller undantag från skatt (att slippa skatten helt, inte skjuta fram den), och inte
+  ombildningar där kvalificeringsvillkoren inte är i fråga.
+prompt_template: |
+  Konceptet är kontinuitetsprincipen: vid vissa kvalificerade ombildningar och överlåtelser (t.ex.
+  underprisöverlåtelser, fusioner, fissioner, verksamhetsavyttringar, andelsbyten) övertar förvärvaren
+  överlåtarens skattemässiga värden, så att beskattningen skjuts upp snarare än utlöses vid
+  transaktionstillfället. Detta är en lagfäst avvikelse från huvudregeln om omedelbar
+  uttagsbeskattning.
+
+  Räknas som match
+  - Prövning av om villkoren för en kvalificerad fusion, fission eller underprisöverlåtelse är
+    uppfyllda (t.ex. ägarkrav, verksamhetskrav, skattskyldighetsvillkor), med följden att
+    beskattningen skjuts upp om villkoren är uppfyllda.
+  - Mål som använder eller diskuterar formuleringar som "inträder i det överlåtande företagets
+    skattemässiga situation", "skattemässig kontinuitet" eller "uppskjuten/framskjuten beskattning" i
+    samband med en ombildning.
+  - Avvägning mellan kontinuitetsprincipen och en annan, konkurrerande skatteregel (t.ex. HFD 2019
+    ref. 7 om kontinuitet vid kvalificerad fusion kontra den särskilda beskattningsordningen för
+    privatbostadsföretag).
+  - Andelsbyten enligt 48 a kap. IL där framskjuten beskattning är i fråga.
+
+  Räknas inte som match
+  - Mål om befrielse eller fullständigt undantag från skatt, där frågan inte är att skjuta upp
+    beskattningen utan att slippa den helt.
+  - Ombildningar där det är ostridigt att villkoren för kontinuitet är uppfyllda och tvisten gäller
+    något annat, t.ex. utdelningsbeskattning av ägarna som sådan utan koppling till
+    kontinuitetsvillkoren.
+  - Allmänna företagsombildningar utan skattemässig kontinuitetsfråga.
+
+  Gränsfall
+  - Om målet gäller en ombildning men det är oklart om tvisten rör kontinuitetsvillkoren eller en
+    annan, fristående skattefråga (som i Sipano-målens fokus på utdelningsbeskattning), är svaret
+    uncertain om inte kontinuiteten uttryckligen prövas.
+
+  Exempel
+  - "Kontinuiteten enligt reglerna om kvalificerade fusioner har ansetts ha företräde framför den
+    särskilda beskattningsordningen för privatbostadsföretag." – match (HFD 2019 ref. 7).
+  - "Fråga om villkoren för kvalificerad underprisöverlåtelse är uppfyllda så att uttagsbeskattning
+    inte ska ske." – match.
+  - "Fråga om utdelningsbeskattning för ägare vars bolag genomfört underprisöverlåtelser, utan att
+    kontinuitetsvillkoren i sig är tvistiga." – uncertain/no_match beroende på om kontinuiteten
+    prövas.

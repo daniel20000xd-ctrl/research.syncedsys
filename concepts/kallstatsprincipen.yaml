@@ -1,0 +1,45 @@
+# Källstatsprincipen: beskattningsanspråk grundas på var inkomsten har sin källa (begränsad
+# skattskyldighet). Motsatsen är hemvistprincipen (se hemvistprincipen.yaml) — de två prövas ofta i
+# samma mål men är separata koncept här.
+# Immutable once run — revise by copying to kallstatsprincipen_2.yaml.
+strategy: vector_llm
+candidate_depth: 200
+exemplars: []
+definition: |
+  Matcha mål där domstolen prövar beskattningsrätt grundad på att inkomsten har sin källa i Sverige
+  (källstatsprincipen), dvs. begränsad skattskyldighet för den som inte har hemvist här. Typiskt: SINK
+  (särskild inkomstskatt för utomlands bosatta) för fysiska personer; för utländska juridiska personer
+  fast driftställe i Sverige (2 kap. 29 § IL) eller fastighet här, och hur mycket vinst som ska allokeras
+  till driftstället. I skatteavtal: fördelningen av beskattningsrätt mellan hemviststat och källstat för
+  olika inkomstslag. Matcha inte mål som enbart gäller om den skattskyldige har hemvist i Sverige (se
+  hemvistprincipen) utan koppling till källbeskattning av en begränsat skattskyldig.
+prompt_template: |
+  Konceptet är källstatsprincipen: beskattningsrätten grundas på var inkomsten har sin källa, vilket ger
+  begränsad skattskyldighet – bara den inkomst som uppstått i källstaten beskattas där – till skillnad
+  från hemvistprincipen, som grundar beskattningsrätten på den skattskyldiges hemvist.
+
+  Räknas som match
+  - Mål om SINK (särskild inkomstskatt för utomlands bosatta) för en fysisk person som inte är
+    obegränsat skattskyldig i Sverige.
+  - Mål om huruvida ett fast driftställe har förelegat i Sverige för ett utländskt bolag (2 kap. 29 §
+    IL) och hur mycket vinst som ska allokeras till driftstället.
+  - Mål om begränsad skattskyldighet för fastighet i Sverige som ägs av den som saknar hemvist här.
+  - Tolkning i ett specifikt skatteavtal av hur beskattningsrätten för en viss inkomsttyp fördelas
+    mellan hemviststat och källstat.
+
+  Räknas inte som match
+  - Mål som enbart prövar om den skattskyldige har hemvist eller väsentlig anknytning till Sverige
+    (obegränsad skattskyldighet), utan att källbeskattning av en begränsat skattskyldig är i fråga (se
+    hemvistprincipen).
+  - Inhemska inkomstskattetvister utan gränsöverskridande eller källstatsanknuten fråga.
+
+  Gränsfall
+  - Om målet prövar både hemvist och källbeskattning tillsammans, matcha ändå om källstatsfrågan (fast
+    driftställe, SINK, fördelning av beskattningsrätt) uttryckligen prövas – även om hemvistfrågan också
+    matchar hemvistprincipen separat.
+
+  Exempel
+  - "Fråga om fast driftställe förelegat i Sverige för ett utländskt bolag och vinstallokering
+    därtill." – match.
+  - "Tillämpning av SINK på ersättning till en person bosatt utomlands." – match.
+  - "Fråga om väsentlig anknytning till Sverige kvarstått efter utflyttning." – no_match (hemvist).
